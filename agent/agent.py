@@ -211,7 +211,7 @@ from agent.tools.executions_tools import (
 agent = Agent(
     name="change-impact-agent",
     description=(
-        "Aegis Change Impact Agent. Analyzes pull requests for CI/CD risk. "
+        "ChangeGuard Change Impact Agent. Analyzes pull requests for CI/CD risk. "
         "Determines deployment strategy using deterministic risk rules. "
         "Detects coverage gaps for new endpoints. "
         "Never executes directly — delegates to Adaptive CI/CD Server "
@@ -238,7 +238,7 @@ agent = Agent(
     model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-001"),
 )
 
-logger.info("✅ Agent '%s' ready (model: %s, tools: %d)",
+logger.info("Agent '%s' ready (model: %s, tools: %d)",
             agent.name, agent.model, len(agent.tools))
 
 # ═══════════════════════════════════════════════════════════════

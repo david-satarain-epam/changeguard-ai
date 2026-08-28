@@ -6,7 +6,7 @@ Receives PR payload → returns risk assessment.
 import logging
 from google.adk.tools import MCPTool, ToolContext
 
-logger = logging.getLogger("aegis-agent.tools")
+logger = logging.getLogger("changeguard-agent.tools")
 
 from risk_engine.services import (
     identify_affected_services,

@@ -1,1 +1,1 @@
-"""Tests for the Aegis Change Impact Agent."""
+"""Tests for the ChangeGuard Change Impact Agent."""

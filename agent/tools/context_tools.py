@@ -9,7 +9,7 @@ In Layer 2 (connected), they call the Impact Context Server via MCP.
 import logging
 from google.adk.tools import MCPTool, ToolContext
 
-logger = logging.getLogger("aegis-agent.context")
+logger = logging.getLogger("changeguard-agent.context")
 
 
 # ═══════════════════════════════════════════════════════════════

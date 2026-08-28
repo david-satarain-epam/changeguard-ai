@@ -9,7 +9,7 @@ In Layer 2: MCP calls to Secure Broker.
 import logging
 from google.adk.tools import MCPTool, ToolContext
 
-logger = logging.getLogger("aegis-agent.execution")
+logger = logging.getLogger("changeguard-agent.execution")
 
 
 # ═══════════════════════════════════════════════════════════════

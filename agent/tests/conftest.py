@@ -1,5 +1,5 @@
 """
-Shared fixtures for Aegis Agent tests.
+Shared fixtures for ChangeGuard AI Agent tests.
 Loads all PR mock payloads for scenario testing.
 """
 
