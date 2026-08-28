@@ -1,0 +1,11 @@
+{
+  "pr_id": "851",
+  "title": "Add multi-currency support to payment and billing schemas",
+  "description": "Add currency field to RefundRequest and Invoice. New required field: currency.",
+  "files_changed": [
+    "src/payment/schema.py",
+    "src/billing/invoice.py"
+  ],
+  "diff_summary": "Added Currency enum (USD, EUR, MXN). New required field 'currency' in RefundRequest and Invoice. BREAKING: all clients must provide currency.",
+  "repo": "payment-api"
+}

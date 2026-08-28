@@ -1,0 +1,11 @@
+{
+  "pr_id": "849",
+  "title": "Add multi-provider OAuth2 + PKCE support",
+  "description": "Add support for Google, GitHub, and Microsoft OAuth providers. Add PKCE for enhanced security.",
+  "files_changed": [
+    "src/auth/oauth.py",
+    "src/auth/token.py"
+  ],
+  "diff_summary": "Added OAuthProvider enum. Added PKCEParams. exchange_code_for_token() now accepts optional PKCE. New required field: provider in OAuthConfig.",
+  "repo": "payment-api"
+}

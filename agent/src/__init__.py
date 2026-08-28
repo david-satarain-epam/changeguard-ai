@@ -1,1 +1,0 @@
-"""ChangeGuard impact analysis agent."""

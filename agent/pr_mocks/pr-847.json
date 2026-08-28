@@ -1,0 +1,11 @@
+{
+  "pr_id": "847",
+  "title": "Update refund endpoint — add partial refund support",
+  "description": "Changes the refund schema to support partial refunds. Amount type changed from integer to decimal. New optional field: partial_refund_amount.",
+  "files_changed": [
+    "src/payment/api.py",
+    "src/payment/schema.py"
+  ],
+  "diff_summary": "RefundRequest.amount type changed from integer to decimal. New optional field partial_refund_amount. BREAKING: clients expecting integer amount will break.",
+  "repo": "payment-api"
+}

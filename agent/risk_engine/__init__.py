@@ -1,0 +1,1 @@
+"""Risk engine — deterministic, testable, no ADK dependencies."""

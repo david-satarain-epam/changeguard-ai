@@ -1,0 +1,10 @@
+{
+  "pr_id": "850",
+  "title": "Refactor logger for structured Cloud Logging format",
+  "description": "Update logger to output JSON structured logs compatible with Google Cloud Logging.",
+  "files_changed": [
+    "src/utils/logger.py"
+  ],
+  "diff_summary": "Refactored log() function. Changed output format from plain text to JSON. Added 'severity' and 'source' fields. No breaking changes.",
+  "repo": "payment-api"
+}

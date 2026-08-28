@@ -1,3 +1,0 @@
-services:
-  - name: sample-service
-    dependsOn: []

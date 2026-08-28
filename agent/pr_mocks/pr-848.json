@@ -1,0 +1,10 @@
+{
+  "pr_id": "848",
+  "title": "Fix typo in notification template",
+  "description": "Fix spelling error in refund confirmation email.",
+  "files_changed": [
+    "src/notifications/template.html"
+  ],
+  "diff_summary": "Fixed typo: 'Confirmation' → 'Confirmation' in email subject line.",
+  "repo": "payment-api"
+}

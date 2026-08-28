@@ -1,0 +1,11 @@
+{
+  "pr_id": "852",
+  "title": "Add batch refund endpoint",
+  "description": "New POST /refund/batch endpoint. Accepts array of refund requests. Supports SEQUENTIAL and PARALLEL processing.",
+  "files_changed": [
+    "src/payment/batch_refund.py",
+    "src/payment/schema.py"
+  ],
+  "diff_summary": "NEW FILE: batch_refund.py. NEW ENDPOINT: POST /refund/batch. ZERO test coverage.",
+  "repo": "payment-api"
+}

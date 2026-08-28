@@ -1,4 +1,6 @@
-fastapi
-uvicorn[standard]
-pytest
-python-dotenv
+google-cloud-aiplatform>=1.50.0
+google-adk>=1.0.0
+mcp>=1.0.0
+python-dotenv>=1.0.0
+pytest>=8.0.0
+pytest-asyncio>=0.24.0

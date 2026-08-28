@@ -1,4 +1,4 @@
-from src.agent import analyze_pull_request
+from agent.agent import analyze_pull_request
 
 
 def test_analyze_pull_request_uses_mock() -> None:
