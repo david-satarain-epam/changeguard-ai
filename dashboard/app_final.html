@@ -1,0 +1,235 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Change Guard AI - Dashboard</title>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#f1f5f9; color:#0f172a; margin:24px; }
+    .container { max-width:1200px; margin:0 auto; }
+    h1 { font-size:24px; margin-bottom:12px }
+    .pr-card { background:#fff; border-radius:12px; padding:18px; margin-bottom:18px; box-shadow:0 6px 16px rgba(2,6,23,0.06); border:1px solid #e6e6e6 }
+    .card-header { display:flex; justify-content:space-between; align-items:center }
+    .card-title { font-size:18px; font-weight:700; margin:0 }
+    .card-author { color:#475569; font-size:0.9rem }
+    .risk-badge { display:inline-flex; align-items:center; justify-content:center; padding:6px 12px; border-radius:999px; font-weight:700; color:white }
+    .risk-badge.high { background:#dc2626 }
+    .risk-badge.medium { background:#f59e0b }
+    .risk-badge.low { background:#16a34a }
+    .risk-badge.critical { background:#8b0000 }
+    .risk-badge.none { background:#64748b }
+    .risk-label { margin-top:10px; font-weight:600; color:#334155 }
+    .strategy-box { background:#f8fafc; border-left:4px solid #2563eb; padding:10px 12px; border-radius:8px; margin-top:10px }
+    .impact-grid { display:grid; gap:8px; margin-top:12px }
+    .impact-row { background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:10px; color:#0f172a }
+    .impact-label { font-weight:700; color:#334155; margin-right:8px }
+    .small-list { margin:6px 0 0 18px; color:#475569 }
+    .muted { color:#64748b }
+    .btn { display:inline-block; padding:8px 12px; background:#2563eb; color:white; border-radius:8px; text-decoration:none }
+    .btn-white { display:inline-flex; align-items:center; gap:8px; padding:8px 10px; background:#ffffff; color:#0f172a; border-radius:8px; border:1px solid #cbd5e1; cursor:pointer }
+    pre { background:#0f172a; color:#e6eef8; padding:10px; border-radius:6px; overflow:auto }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Change Guard AI — Pull Request Overview</h1>
+    <div id="content">Loading...</div>
+  </div>
+
+  <!-- html2pdf (bundles html2canvas + jsPDF) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
+
+  <script>
+  async function load() {
+    const container = document.getElementById('content');
+    try {
+      const res = await fetch('../contracts/agent_output.json');
+      if (!res.ok) throw new Error('Failed to fetch JSON: ' + res.status);
+      const text = await res.text();
+      if (!text || !text.trim()) {
+        container.innerHTML = '<div class="muted">Error: fetched file is empty. Ensure the server is serving the repo root and the file is present.</div>';
+        return;
+      }
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        container.innerHTML = '<div class="muted">Error parsing JSON from contracts/agent_output.json.</div><pre>' + escapeHtml(parseErr.toString()) + '\n\nPartial content:\n' + escapeHtml(text.slice(0,2000)) + '</pre>';
+        return;
+      }
+      render(data, container);
+    } catch (err) {
+      container.innerHTML = '<div class="muted">Error loading data. Serve the repo root over HTTP and ensure the file exists.</div><pre>' + escapeHtml(err.toString()) + '</pre>';
+    }
+  }
+
+  function escapeHtml(s){ return String(s || '').replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]; }); }
+
+  function render(items, container){
+    if(!items || !items.length){ container.innerHTML = '<div class="muted">No analyses found in JSON.</div>'; return; }
+    container.innerHTML = '';
+    for(const a of items){
+      // Normalize different agent_output.json shapes into a common `n` object
+      const reportMeta = a.report_metadata || a.reportMeta || null;
+      const impact = a.impact_analysis || a.impactAnalysis || null;
+      const pipeline = a.pipeline_execution || a.pipelineExecution || null;
+      const n = {
+        pullRequestId: a.pullRequestId || a.pr_id || (reportMeta && (reportMeta.pr_id || reportMeta.id)) || a.id || a.prId || '',
+        summary: a.summary || a.title || (a.reasoning ? (a.reasoning.split('\n')[0]).slice(0,120) : '') || (reportMeta && reportMeta.pr_title) || a.pr_id || '',
+        author: a.author || a.submitter || (reportMeta && reportMeta.author) || '',
+        pr_title: (reportMeta && (reportMeta.pr_title || reportMeta.title)) || a.pr_title || a.title || a.subject || '',
+        decision: (impact && (impact.decision || impact.decision)) || a.decision || a.decision_decision || a.status || (reportMeta && reportMeta.status) || '',
+        riskLevel: (impact && (impact.risk_score || impact.riskScore)) || a.riskLevel || a.risk_score || a.riskScore || '',
+        riskScore: (impact && (impact.risk_score || impact.riskScore)) || a.riskScore || a.risk_score || a.score || null,
+        riskReason: (impact && typeof impact.reasoning === 'string' && impact.reasoning.trim().length) ? impact.reasoning.trim() : (Array.isArray(impact && impact.escalation_log) && (impact.escalation_log.length>0) ? impact.escalation_log : (Array.isArray(a.riskReason) ? a.riskReason : (a.riskReason || a.risk_reason || (a.reasoning || '')))),
+        deploymentStrategy: (impact && (impact.strategy || impact.deployment_strategy)) || (a.suggestedStrategy !== undefined && a.suggestedStrategy !== null ? a.suggestedStrategy : (a.deployment_strategy || a.deploymentStrategy || '')),
+        affectedServices: (impact && (impact.affected_services || impact.affectedServices)) || a.affectedServices || a.affected_services || a.services || [],
+        affectedConsumersCount: (impact && (impact.affected_consumers_count || impact.affectedConsumersCount)) || (a.affectedConsumersCount !== undefined && a.affectedConsumersCount !== null ? a.affectedConsumersCount : (a.affected_consumers_count !== undefined ? a.affected_consumers_count : null)),
+        testPlan: a.testPlan || a.test_plan || (impact && impact.test_plan) || [],
+        suggestedNewTests: a.suggestedNewTests || a.suggested_new_tests || (impact && impact.suggested_tests) || [],
+        pipelineStages: (pipeline && pipeline.stages) || (impact && impact.pipeline && impact.pipeline.stages) || [],
+        pipelineFinalStatus: (pipeline && (pipeline.final_status || pipeline.finalStatus)) || (impact && (impact.final_status || impact.finalStatus)) || null
+      };
+      const card = document.createElement('div'); card.className='pr-card';
+
+      const header = document.createElement('div'); header.className='card-header';
+
+      const title = document.createElement('div'); title.innerHTML = `<div class="card-title">${escapeHtml(n.pullRequestId)}: ${escapeHtml(n.pr_title || n.summary)}</div><div class="card-author">${escapeHtml(n.author)}</div>`;
+
+      const badge = document.createElement('div');
+      const decision = (n.decision || '').toString().toUpperCase();
+      // Map decision to one of the existing badge color classes
+      const decisionMap = {
+        'APPROVE': 'low',
+        'ROLLOUT': 'medium',
+        'POSTPONE': 'high',
+      };
+      const decisionCls = decisionMap[decision] || 'none';
+      badge.innerHTML = `<div class="risk-badge ${decisionCls}">${escapeHtml(decision || 'UNKNOWN')}</div>`;
+      const actions = document.createElement('div');
+      actions.style.display = 'inline-flex';
+      actions.style.alignItems = 'center';
+      actions.style.gap = '10px';
+      header.appendChild(title);
+
+      const printBtn = document.createElement('button');
+      printBtn.className = 'btn-white print-btn';
+      printBtn.textContent = '⎙ Print';
+      printBtn.textContent = 'Print PDF';
+      printBtn.addEventListener('click', async () => {
+        try {
+          
+          let off = document.getElementById('__offscreen_pdf_container');
+          if (!off) {
+            off = document.createElement('div');
+            off.id = '__offscreen_pdf_container';
+            off.style.position = 'fixed'; off.style.left = '-9999px'; off.style.top = '0';
+            document.body.appendChild(off);
+          }
+          // clone the card and remove any print buttons inside it
+          const clone = card.cloneNode(true);
+          const btns = clone.querySelectorAll('.print-btn');
+          btns.forEach(b => b.remove());
+          off.appendChild(clone);
+          const prId = (n.pullRequestId || 'pr').replace(/[^a-zA-Z0-9-_\.]/g, '_');
+          const opt = {
+            margin: 0.75,
+            filename: `${prId}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true },
+            jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+          };
+          if (window.html2pdf) {
+            await html2pdf().set(opt).from(clone).save();
+          } else {
+            alert('html2pdf not loaded');
+          }
+          
+          clone.remove();
+        } catch (err) {
+          console.error('PDF generation failed', err);
+          alert('PDF generation failed: ' + err);
+        }
+      });
+      // assemble actions: badge then print button, and attach to header (right side)
+      actions.appendChild(badge);
+      actions.appendChild(printBtn);
+      header.appendChild(actions);
+      card.appendChild(header);
+
+      // Render risk
+      const level = (n.riskLevel || 'None').toString();
+      const riskBlock = document.createElement('div');
+      riskBlock.className = 'strategy-box';
+      const colorMap = { critical: '#8b0000', high: '#dc2626', medium: '#f59e0b', low: '#16a34a', none: '#64748b' };
+      const lvlKey = (level || 'none').toString().toLowerCase();
+      const leftColor = colorMap[lvlKey] || '#64748b';
+      riskBlock.style.borderLeft = '4px solid ' + leftColor;
+      const displayLevel = (level || 'None').toString();
+      const displayScore = (n.riskScore !== null && n.riskScore !== undefined) ? String(n.riskScore) : '';
+      const scorePart = (displayScore && displayScore.toLowerCase() !== displayLevel.toLowerCase()) ? (' — ' + escapeHtml(displayScore)) : '';
+      let reasonText = '';
+      if (Array.isArray(n.riskReason) && n.riskReason.length) reasonText = n.riskReason.join('; ');
+      else if (typeof n.riskReason === 'string' && n.riskReason.trim()) reasonText = n.riskReason.trim();
+      riskBlock.innerHTML = `<strong>Risk:</strong> ${escapeHtml(displayLevel)}${scorePart}` + (reasonText ? `<div style="margin-top:8px;color:#334155;font-weight:500;">${escapeHtml(reasonText)}</div>` : '');
+      card.appendChild(riskBlock);
+
+
+      const strat = document.createElement('div'); strat.className='strategy-box';
+      const rawStrategy = n.deploymentStrategy;
+      const stratText = Array.isArray(rawStrategy) ? rawStrategy.join('; ') : rawStrategy || '';
+      strat.innerHTML = `<strong>Deployment Strategy:</strong> ${escapeHtml(stratText)}`;
+
+      // Consumers
+      if(n.affectedConsumersCount !== undefined && n.affectedConsumersCount !== null){
+        const consDiv = document.createElement('div'); consDiv.className='impact-grid'; consDiv.innerHTML = `<div class='impact-row'><span class='impact-label'>Affected consumers:</span><ul class='small-list'><li>${escapeHtml(String(n.affectedConsumersCount))}</li></ul></div>`; card.appendChild(consDiv);
+      }
+      // Affected services
+      if(n.affectedServices && n.affectedServices.length){
+        const svcDiv = document.createElement('div'); svcDiv.className='impact-grid'; svcDiv.innerHTML = `<div class='impact-row'><span class='impact-label'>Affected services:</span><ul class='small-list'>${n.affectedServices.map(s=>`<li>${escapeHtml(s)}</li>`).join('')}</ul></div>`; card.appendChild(svcDiv);
+      }
+
+  
+      // Test plan
+      if(n.testPlan && n.testPlan.length){
+        const testsDiv = document.createElement('div'); testsDiv.className='impact-grid'; testsDiv.innerHTML = `<div class='impact-row'><span class='impact-label'>Planned Tests:</span><ul class='small-list'>${n.testPlan.map(t=>`<li>${escapeHtml(t)}</li>`).join('')}</ul></div>`; card.appendChild(testsDiv);
+      }
+
+      // Suggested new tests
+      if(n.suggestedNewTests && n.suggestedNewTests.length){
+        const newTestsDiv = document.createElement('div'); newTestsDiv.className='impact-grid'; newTestsDiv.innerHTML = `<div class='impact-row'><span class='impact-label'>Suggested Tests:</span><ul class='small-list'>${n.suggestedNewTests.map(t=>`<li>${escapeHtml(t)}</li>`).join('')}</ul></div>`; card.appendChild(newTestsDiv);
+      }
+
+      // Pipeline stages (if present)
+      if(n.pipelineStages && n.pipelineStages.length){
+        const stagesHtml = n.pipelineStages.map(s => {
+          const name = s.name || s.stage || s.key || 'stage';
+          const status = (s.status || '').toUpperCase();
+          const dur = s.duration_seconds ? ` (${s.duration_seconds}s)` : (s.duration ? ` (${s.duration})` : '');
+          const details = s.details || s.summary || '';
+          const color = (['PASSED','COMPLETED','SUCCESS'].includes(status)) ? '#16a34a' : (['ACTION_REQUIRED'].includes(status) ? '#f59e0b' : (['FAILURE','FAILED','ERROR','TIMED_OUT'].includes(status) ? '#dc2626' : '#64748b'));
+          // Stage status: normal weight (not bold)
+          return "<div class='impact-row' style='display:flex;justify-content:space-between;align-items:center'>" +
+                 "<div><span class='impact-label'>" + escapeHtml(name) + ":</span><div class='small-list' style='margin-top:6px'>" + escapeHtml(details) + "</div></div>" +
+                 "<div style='color:" + color + "'>" + escapeHtml(status) + escapeHtml(dur) + "</div></div>";
+        }).join('');
+
+        // Final pipeline status (if present) shown inline with header, bold and color-coded
+        const finalStatus = (n.pipelineFinalStatus || '').toString().toUpperCase();
+        const finalColor = (['SUCCESS','PASSED','COMPLETED'].includes(finalStatus)) ? '#16a34a' : (['FAILED','FAILURE','ERROR','TIMED_OUT'].includes(finalStatus) ? '#dc2626' : '#64748b');
+        const headerHtml = `<div style='display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-top:10px'><div>Pipeline Stages</div><div style='font-weight:700;color:${finalColor}'>${escapeHtml(finalStatus || '')}</div></div>`;
+        const pipeDiv = document.createElement('div'); pipeDiv.className = 'impact-grid'; pipeDiv.innerHTML = headerHtml + stagesHtml;
+        card.appendChild(pipeDiv);
+      }
+
+      card.appendChild(strat);
+
+      container.appendChild(card);
+    }
+  }
+
+  load();
+  </script>
+</body>
+</html>
