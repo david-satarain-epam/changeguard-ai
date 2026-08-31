@@ -1,251 +1,163 @@
-"""
-ChangeGuard AI - Change Impact Agent
-=========================
-ADK Agent for Gemini Enterprise.
-
-Deploy options:
-  - Gemini Agent Engine:  import `agent`
-  - Cloud Run (testing):  python agent.py
-"""
+"""ChangeGuard AI — PR Risk Assessment Workflow."""
 
 import os
-import logging
-from dotenv import load_dotenv
-
-load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("changeguard-agent")
-
+from typing import Any
+import dotenv
 from google.adk import Agent
-from google.adk.tools import MCPTool
+from google.adk import Context
+from google.adk import Workflow
+from google.adk.apps import App
+from google.adk.events.event import Event
+from google.adk.workflow import node
 
-# ═══════════════════════════════════════════════════════════════
-# SYSTEM PROMPT
-# ═══════════════════════════════════════════════════════════════
+try:
+    from .tools import fetch_github_prs, calculate_pr_risk, simulate_pipeline
+except ImportError:  # pragma: no cover
+    from tools.github_api import fetch_github_prs
+    from tools.risk_analyzer import calculate_pr_risk
+    from tools.pipeline_simulator import simulate_pipeline
 
-SYSTEM_PROMPT = """
-You are the Change Impact Agent for the ChangeGuard AI solution,
-running on Google Gemini Enterprise via the Agent Development Kit (ADK).
+dotenv.load_dotenv()
 
-YOUR JOB:
-Analyze pull requests and determine the safest way to deploy them.
-
-YOU NEVER EXECUTE. You analyze, decide, and delegate execution to the
-Adaptive CI/CD Server through the Secure Broker.
-
-═══════════════════════════════════════════════════════════════
-TOOLS AVAILABLE (MCP)
-═══════════════════════════════════════════════════════════════
-
-CONTEXT TOOLS (call the Impact Context Server):
-  • compare_api_contracts(service, old_version, new_version)
-    → Returns breaking changes, new fields, deprecated elements
-  • find_affected_consumers(service, endpoint)
-    → Returns internal and external consumers, total count
-  • get_business_criticality(service)
-    → Returns TIER (1-3), max downtime, business function
-  • get_test_catalog(service, affected_area)
-    → Returns available test counts. Returns 0 for new endpoints.
-
-EXECUTION TOOLS (call the Secure Broker → CI/CD Server):
-  • run_tests(test_plan, pr_id)
-    → Executes test suite
-  • deploy_canary(percentage, service)
-    → Deploys to a percentage of traffic
-  • monitor(duration_minutes, service)
-    → Monitors error rate, latency, throughput
-  • deploy_full(service)
-    → Deploys to 100% traffic
-  • rollback(service, version)
-    → Emergency rollback
-
-═══════════════════════════════════════════════════════════════
-DETERMINISTIC RISK RULES (NON-NEGOTIABLE)
-═══════════════════════════════════════════════════════════════
-
-PATH-BASED MINIMUM RISK:
-  • src/payment/**       → minimum MEDIUM (core payment processing)
-  • src/auth/**          → minimum HIGH   (authentication — affects ALL)
-  • src/billing/**       → minimum MEDIUM (revenue recognition)
-  • src/notifications/** → minimum LOW    (non-critical, async)
-  • src/utils/**         → minimum LOW    (shared utilities)
-
-ESCALATION RULES (+1 level each):
-  • API schema changed (any file with 'schema' in path)
-  • 3+ services affected
-  • TIER 1 service affected
-  • Breaking change detected
-
-RISK → DECISION → STRATEGY:
-  LOW      → APPROVE   → DIRECT
-  MEDIUM   → APPROVE   → GATED
-  HIGH     → ROLLOUT   → CANARY
-  CRITICAL → POSTPONE  → NONE
-
-═══════════════════════════════════════════════════════════════
-COVERAGE GAP HANDLING (CRITICAL)
-═══════════════════════════════════════════════════════════════
-
-After calling get_test_catalog(), check if the affected area has tests.
-
-If total tests == 0 for any affected service or endpoint:
-  → Risk: CRITICAL
-  → Decision: POSTPONE
-  → Reasoning: "New endpoint/service has zero test coverage."
-  → Generate 6-10 suggested test names based on the code diff
-  → Under NO CIRCUMSTANCES proceed with deployment.
-
-═══════════════════════════════════════════════════════════════
-MONITORING THRESHOLDS
-═══════════════════════════════════════════════════════════════
-  • Error rate > 1%      → ROLLBACK
-  • Latency p95 > 500ms  → ROLLBACK
-  • Both metrics clean   → PROCEED to full deploy 
-
-═══════════════════════════════════════════════════════════════
-BEHAVIOR RULES
-═══════════════════════════════════════════════════════════════
-1. ALWAYS gather context first. Never guess consumers, contracts, or test coverage.
-2. ALWAYS be specific in reasoning.
-3. If the PR description is vague or missing context, ASK FOR CLARIFICATION before making a decision.
-4. SELF-CORRECT: if you find a TIER 1 dependency, escalate.
-5. Evaluate test results before next stage. If tests fail, STOP. Do not deploy.
-6. If metrics degraded, ORDER ROLLBACK immediately.
-
-═══════════════════════════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════
-Always return valid JSON with this schema:
-
-{
-  "pr_id": "string",
-  "risk_score": "LOW|MEDIUM|HIGH|CRITICAL",
-  "decision": "APPROVE|POSTPONE|ROLLOUT",
-  "affected_services": ["string"],
-  "affected_consumers_count": number,
-  "test_plan": ["string"],
-  "suggested_new_tests": ["string"],
-  "coverage_gap_detected": boolean,
-  "deployment_strategy": "DIRECT|GATED|CANARY|NONE",
-  "reasoning": "string",
-  "context_sources": {
-    "api_contract_checked": boolean,
-    "consumers_queried": boolean,
-    "criticality_checked": boolean,
-    "test_catalog_queried": boolean
-  }
-}
-"""
-
-# ═══════════════════════════════════════════════════════════════
-# DETERMINISTIC RISK ENGINE
-# ═══════════════════════════════════════════════════════════════
-
-RISK_LEVELS = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
-RISK_NAMES = {0: "LOW", 1: "MEDIUM", 2: "HIGH", 3: "CRITICAL"}
-
-PATH_RULES = [
-    ("src/payment/", "MEDIUM", "Core payment processing"),
-    ("src/auth/", "HIGH", "Authentication — affects ALL services"),
-    ("src/billing/", "MEDIUM", "Revenue recognition"),
-    ("src/notifications/", "LOW", "Non-critical, async"),
-    ("src/utils/", "LOW", "Shared utilities"),
-]
-
-PATH_TO_SERVICE = {
-    "src/payment/": "payment-api",
-    "src/auth/": "auth-service",
-    "src/billing/": "billing-service",
-    "src/notifications/": "notification-service",
-    "src/utils/": "all-services",
-}
-
-SERVICE_TIERS = {
-    "payment-api": 1,
-    "auth-service": 1,
-    "billing-service": 2,
-    "notification-service": 3,
-}
+MODEL = os.environ.get("MODEL", "gemini-2.0-flash")
 
 
-# ═══════════════════════════════════════════════════════════════
-# ADK CALLBACKS (Google ADK feature)
-# ═══════════════════════════════════════════════════════════════
+# ─── Phase 1: Input Agent ────────────────────────────────────────
+# Standalone conversational agent that validates the repository URL.
+# Runs as its own App before the main workflow starts.
 
-async def before_tool_callback(tool_name: str, params: dict, context: ToolContext):
-    """Called before every tool execution. Logs the call."""
-    session_id = context.session_id if context else "unknown"
-    logger.info("[BEFORE] Tool: %s | Session: %s", tool_name, session_id)
+input_agent = Agent(
+    name="input_agent",
+    model=MODEL,
+    instruction="""
+You are the first step of the ChangeGuard AI PR Risk Assessor.
 
+Your ONLY job is to extract a valid GitHub repository URL from the user message.
 
-async def after_tool_callback(tool_name: str, params: dict, result, context: ToolContext):
-    """Called after every tool execution. Logs the result."""
-    duration_ms = getattr(result, "duration_ms", None)
-    logger.info("[AFTER]  Tool: %s | Duration: %s", tool_name, duration_ms or "N/A")
+- If the message contains a valid GitHub repository URL (https://github.com/owner/repo),
+  return ONLY that URL — no extra text, no punctuation.
+- If the message is empty, unclear, or does not contain a valid GitHub repository URL,
+  respond with EXACTLY this and nothing else:
+  Please provide your GitHub repository URL (e.g., https://github.com/owner/repo):
 
-
-# ═══════════════════════════════════════════════════════════════
-# TOOLS
-# ═══════════════════════════════════════════════════════════════
-
-from agent.tools.analyze_pr import analyze_pr_tool
-from agent.tools.context_tools import (
-    compare_api_contracts_tool,
-    find_affected_consumers_tool,
-    get_business_criticality_tool,
-    get_test_catalog_tool,
-)
-from agent.tools.executions_tools import (
-    run_tests_tool,
-    deploy_canary_tool,
-    monitor_tool,
-    deploy_full_tool,
-    rollback_tool,
+Do not greet the user. Do not add explanations.
+""",
 )
 
-# ═══════════════════════════════════════════════════════════════
-# AGENT
-# ═══════════════════════════════════════════════════════════════
 
-agent = Agent(
-    name="change-impact-agent",
-    description=(
-        "ChangeGuard Change Impact Agent. Analyzes pull requests for CI/CD risk. "
-        "Determines deployment strategy using deterministic risk rules. "
-        "Detects coverage gaps for new endpoints. "
-        "Never executes directly — delegates to Adaptive CI/CD Server "
-        "through the Secure Broker."
-    ),
-    system_prompt=SYSTEM_PROMPT,
-    tools=[
-        # Context tools (Impact Context Server)
-        compare_api_contracts_tool,
-        find_affected_consumers_tool,
-        get_business_criticality_tool,
-        get_test_catalog_tool,
-        # Main analysis tool
-        analyze_pr_tool,
-        # Execution tools (Broker → CI/CD)
-        run_tests_tool,
-        deploy_canary_tool,
-        monitor_tool,
-        deploy_full_tool,
-        rollback_tool,
+# ─── Phase 2: Workflow Nodes ─────────────────────────────────────
+
+@node(name="fetch_prs_node")
+def fetch_prs_node(ctx: Context, node_input: Any) -> Event:
+    """Fetch the 10 most recent open PRs from the repository URL."""
+    if hasattr(node_input, "parts"):
+        repo_url = "".join(p.text for p in node_input.parts if p.text).strip()
+    elif isinstance(node_input, dict) and "parts" in node_input:
+        repo_url = "".join(p.get("text", "") for p in node_input["parts"]).strip()
+    else:
+        repo_url = str(node_input).strip()
+
+    result = fetch_github_prs(repo_url)
+    return Event(state={"prs_data": result}, output=result)
+
+
+@node(name="assess_prs_node")
+def assess_prs_node(ctx: Context, node_input: Any) -> Event:
+    """Score each PR for risk and simulate its CI/CD pipeline execution."""
+    prs = node_input.get("prs", [])
+
+    assessments = []
+    for pr in prs:
+        assessment = calculate_pr_risk(pr)
+        assessment["pipeline_execution"] = simulate_pipeline(assessment)
+        assessments.append(assessment)
+
+    result = {
+        "repo_url":    node_input.get("repo_url", ""),
+        "repo_name":   node_input.get("repo_name", ""),
+        "assessments": assessments,
+    }
+    return Event(state={"assessments_data": result}, output=result)
+
+
+# ─── Phase 2: Synthesis Agent ────────────────────────────────────
+# Receives the fully-scored assessments and produces the final JSON report array.
+# Uses ADK state injection: {assessments_data} is replaced at runtime with the
+# serialized output of assess_prs_node.
+
+synthesis_agent = Agent(
+    name="synthesis_agent",
+    model=MODEL,
+    instruction="""
+You are the final reporting agent for ChangeGuard AI.
+
+You receive a structured object containing risk assessments for all open PRs in a repository.
+Assessment data:
+{assessments_data}
+
+Return a JSON array — one object per PR — with this exact top-level structure for each item:
+
+  report_html         : A placeholder HTML string for the PR card. Use this template exactly:
+                        "<div style='font-family:-apple-system,sans-serif;padding:16px;border-radius:8px;border:1px solid #e0e0e0;margin:8px 0'><h3>[PR_TITLE] <span style='font-size:12px;padding:2px 8px;border-radius:12px;background:[RISK_COLOR];color:white'>[RISK_SCORE]</span></h3><p><strong>Decision:</strong> [DECISION] &nbsp; <strong>Strategy:</strong> [STRATEGY]</p><p style='color:#555'>[ONE_LINE_SUMMARY]</p></div>"
+                        RISK_COLOR mapping: LOW=#28a745  MEDIUM=#ffc107  HIGH=#fd7e14  CRITICAL=#dc3545
+
+  report_metadata     : Object with keys:
+                          workflow_id            (string, format: "wf-20260830-[pr_id]")
+                          pr_id                  (string, from assessment)
+                          pr_title               (string, from assessment)
+                          generated_at           (string, ISO 8601: "2026-08-30T00:00:00Z")
+                          total_duration_seconds (number, from pipeline_execution.total_duration_seconds)
+                          status                 (string, from pipeline_execution.final_status)
+
+  impact_analysis     : Object with keys:
+                          risk_score               (string, copy from assessment — do NOT change)
+                          decision                 (string, copy from assessment — do NOT change)
+                          strategy                 (string, copy deployment_strategy — do NOT change)
+                          affected_services        (array, copy from assessment)
+                          affected_consumers_count (number, copy from assessment)
+                          reasoning                (string, write 2-3 specific sentences explaining
+                                                   why this PR carries this risk level, what makes it
+                                                   safe or dangerous, and what the deployment approach achieves)
+                          escalation_log           (array, copy from assessment)
+                          coverage_gap_detected    (boolean, copy from assessment)
+                          context_sources          (object, copy from assessment)
+
+  pipeline_execution  : Copy the full pipeline_execution object directly from the assessment.
+
+STRICT RULES:
+- Return ONLY a valid JSON array. No markdown fences, no prose, no extra keys.
+- Never modify risk_score, decision, strategy, or any numeric field from the input.
+- The reasoning must be specific to this PR — reference its actual title, services, and risk factors.
+- For report_html, substitute all placeholders ([PR_TITLE], [RISK_COLOR], etc.) with real values.
+""",
+)
+
+
+# ─── Workflow ────────────────────────────────────────────────────
+
+pr_workflow = Workflow(
+    name="pr_risk_workflow",
+    edges=[
+        ("START",         fetch_prs_node),
+        (fetch_prs_node,  assess_prs_node),
+        (assess_prs_node, synthesis_agent),
     ],
-    before_tool_callback=before_tool_callback,
-    after_tool_callback=after_tool_callback,
-    model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-001"),
 )
 
-logger.info("Agent '%s' ready (model: %s, tools: %d)",
-            agent.name, agent.model, len(agent.tools))
 
-# ═══════════════════════════════════════════════════════════════
-# RUN (Cloud Run / local testing)
-# ═══════════════════════════════════════════════════════════════
+# ─── Apps ────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", "3000"))
-    logger.info("Starting MCP server on port %d (Cloud Run mode)", port)
-    agent.serve_mcp(port=port)
+input_app = App(
+    name="input_agent",
+    root_agent=input_agent,
+)
+
+main_app = App(
+    name="support_agent",
+    root_agent=pr_workflow,
+)
+
+# root_agent is required by `adk web` to discover and run this agent.
+# When running via the web UI the user types the repo URL directly in
+# the chat box; fetch_prs_node picks it up from the first message.
+root_agent = pr_workflow

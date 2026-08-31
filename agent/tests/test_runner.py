@@ -8,7 +8,7 @@ dotenv.load_dotenv()
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from support_agent.agent import input_app, main_app
+from agent import input_app, main_app
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 

@@ -25,12 +25,12 @@ from risk_engine.test_plan import generate_test_plan, generate_suggested_tests
 async def analyze_pr_handler(params: dict, context: ToolContext) -> dict:
     """Analyze a PR and return complete risk assessment."""
     pr_id = params["pr_id"]
-    title = params["title"]
+    pr_title = params["pr_title"]
     files_changed = params.get("files_changed", [])
     diff_summary = params.get("diff_summary", "")
 
     logger.info("━" * 60)
-    logger.info("PR #%s: %s", pr_id, title)
+    logger.info("PR #%s: %s", pr_id, pr_title)
     logger.info("Files: %s", files_changed)
 
     # Step 1: Identify affected services
@@ -69,7 +69,7 @@ async def analyze_pr_handler(params: dict, context: ToolContext) -> dict:
 
     # Step 6: Build reasoning
     parts = [
-        f"PR #{pr_id}: '{title}'.",
+        f"PR #{pr_id}: '{pr_title}'.",
         f"Affected services: {', '.join(affected_services)} ({consumer_count} consumers).",
         *risk["reasons"],
         f"Decision: {risk['decision']}.",
@@ -82,7 +82,7 @@ async def analyze_pr_handler(params: dict, context: ToolContext) -> dict:
 
     return {
         "pr_id": pr_id,
-        "pr_title": title,
+        "pr_title": pr_title,
         "risk_score": risk["score"],
         "decision": risk["decision"],
         "affected_services": affected_services,
