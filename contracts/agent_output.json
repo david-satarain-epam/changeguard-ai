@@ -1,0 +1,239 @@
+[
+  {
+    "pr_id": "pr-735",
+    "pr_title": "Add comments to the payment processing module",
+    "risk_score": "LOW",
+    "decision": "APPROVE",
+    "affected_services": ["main-app-repo"],
+    "affected_consumers_count": 0,
+    "test_plan": [
+      "Run Build Verification",
+      "Run Linter/Static Analysis"
+    ],
+    "suggested_new_tests": [],
+    "coverage_gap_detected": false,
+    "deployment_strategy": "DIRECT",
+    "reasoning": "The change exclusively involves adding comments, which carries an extremely low probability of introducing functional regressions. It has no impact on consumers or system stability.",
+    "pipeline_execution": {
+    "stages": [
+      {
+        "name": "test_suite",
+        "status": "PASSED",
+        "duration_seconds": 47,
+        "details": "42/42 tests passed",
+        "tests": {
+          "total": 42,
+          "passed": 42,
+          "failed": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "name": "security_scan",
+        "status": "PASSED",
+        "duration_seconds": 25,
+        "details": "0 vulnerabilities found"
+      },
+      {
+        "name": "deploy_canary",
+        "status": "COMPLETED",
+        "duration_seconds": 20,
+        "details": "Canary deployed at 10% traffic",
+        "traffic_routed_pct": 10
+      },
+      {
+        "name": "monitoring",
+        "status": "COMPLETED",
+        "duration_seconds": 20,
+        "details": "All metrics within thresholds",
+        "metrics": {
+          "error_rate_pct": 0.01,
+          "error_rate_threshold_pct": 1.0,
+          "latency_p95_ms": 120,
+          "latency_threshold_ms": 500,
+          "throughput_rps": 850,
+          "status": "HEALTHY"
+        }
+      },
+      {
+        "name": "deploy_full",
+        "status": "COMPLETED",
+        "duration_seconds": 30,
+        "details": "100% traffic routed",
+        "traffic_routed_pct": 100
+      }
+    ],
+    "context_sources": {
+      "api_contract_checked": false,
+      "consumers_queried": false,
+      "criticality_checked": true,
+      "test_catalog_queried": true
+    }
+    }
+  },
+  {
+    "pr_id": "pr-801",
+    "pr_title": "Add caching layer for user profile service",
+    "risk_score": "MEDIUM",
+    "decision": "APPROVE",
+    "affected_services": [
+      "user-profile-service",
+      "api-gateway",
+      "caching-service"
+    ],
+    "affected_consumers_count": 50000,
+    "test_plan": [
+      "Run full CI/CD pipeline including unit and integration tests",
+      "Manual QA on staging to verify cache invalidation and data consistency"
+    ],
+    "suggested_new_tests": [
+      "Add integration test for cache invalidation on profile update."
+    ],
+    "coverage_gap_detected": true,
+    "deployment_strategy": "GATED",
+    "reasoning": "Introduces a new dependency (Redis) and caching logic. A misconfiguration could serve stale data. The change is approved for a gated deployment following successful staging verification and post-deployment monitoring.",
+    "context_sources": {
+      "api_contract_checked": true,
+      "consumers_queried": true,
+      "criticality_checked": true,
+      "test_catalog_queried": true
+    }
+  },
+  {
+    "pr_id": "pr-620",
+    "pr_title": "Refactor authentication flow to support multi-factor authentication",
+    "risk_score": "HIGH",
+    "decision": "ROLLOUT",
+    "affected_services": [
+      "auth-service",
+      "user-service",
+      "payment-service",
+      "api-gateway"
+    ],
+    "affected_consumers_count": 5000000,
+    "test_plan": [
+      "Execute full QA regression suite",
+      "Conduct penetration testing on the staging environment",
+      "Perform security and architectural review by senior engineers"
+    ],
+    "suggested_new_tests": [
+      "Add negative test cases for JWT signature verification",
+      "Add performance benchmark test for token generation"
+    ],
+    "coverage_gap_detected": true,
+    "deployment_strategy": "CANARY",
+    "reasoning": "Significant architectural change to the core authentication system. A flaw could lead to a critical security vulnerability. A canary release is required to monitor for issues with a small percentage of traffic before a full rollout.",
+    "context_sources": {
+      "api_contract_checked": true,
+      "consumers_queried": true,
+      "criticality_checked": true,
+      "test_catalog_queried": true
+    }
+  },
+  {
+    "pr_id": "pr-812-hotfix",
+    "pr_title": "Hotfix for P0 Production Incident",
+    "risk_score": "CRITICAL",
+    "decision": "POSTPONE",
+    "affected_services": ["payment-gateway-connector"],
+    "affected_consumers_count": 100000,
+    "test_plan": [
+      "Run expedited critical-path integration tests for payment flow",
+      "Manual validation of the fix on staging by two engineers"
+    ],
+    "suggested_new_tests": [],
+    "coverage_gap_detected": false,
+    "deployment_strategy": "NONE",
+    "reasoning": "While this PR addresses a production incident, the proposed change is deemed too risky for immediate deployment without further analysis or a more robust test plan. The potential for worsening the production issue is high. Decision is to postpone deployment.",
+    "context_sources": {
+      "api_contract_checked": false,
+      "consumers_queried": false,
+      "criticality_checked": true,
+      "test_catalog_queried": true
+    }
+  },
+  {
+  "report_html": "<div style=\"font-family: -apple-system...\">...</div>",
+  "report_metadata": {
+    "workflow_id": "wf-20260830-001",
+    "pr_id": "847",
+    "pr_title": "Update refund endpoint — add partial refund support",
+    "generated_at": "2026-08-30T18:30:00Z",
+    "total_duration_seconds": 142,
+    "status": "SUCCESS"
+  },
+  "impact_analysis": {
+    "risk_score": "HIGH",
+    "decision": "ROLLOUT",
+    "strategy": "CANARY",
+    "affected_services": ["payment-api"],
+    "affected_consumers_count": 12,
+    "reasoning": "PR #847: 'Update refund endpoint'. Affected services: payment-api (12 consumers). Path 'src/payment/' → minimum MEDIUM (Core payment processing). Schema/contract file changed → +1. TIER 1 service 'payment-api' affected → +1. Breaking API contract change → +1. Decision: ROLLOUT. Strategy: CANARY.",
+    "escalation_log": [
+      "Path 'src/payment/' → minimum MEDIUM (Core payment processing)",
+      "Schema/contract file changed → +1",
+      "TIER 1 service 'payment-api' affected → +1",
+      "Breaking API contract change → +1"
+    ],
+    "coverage_gap_detected": false,
+    "context_sources": {
+      "api_contract_checked": true,
+      "consumers_queried": true,
+      "criticality_checked": true,
+      "test_catalog_queried": true
+    }
+  },
+  "pipeline_execution": {
+    "stages": [
+      {
+        "name": "test_suite",
+        "status": "PASSED",
+        "duration_seconds": 47,
+        "details": "42/42 tests passed",
+        "tests": {
+          "total": 42,
+          "passed": 42,
+          "failed": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "name": "security_scan",
+        "status": "PASSED",
+        "duration_seconds": 25,
+        "details": "0 vulnerabilities found"
+      },
+      {
+        "name": "deploy_canary",
+        "status": "COMPLETED",
+        "duration_seconds": 20,
+        "details": "Canary deployed at 10% traffic",
+        "traffic_routed_pct": 10
+      },
+      {
+        "name": "monitoring",
+        "status": "COMPLETED",
+        "duration_seconds": 20,
+        "details": "All metrics within thresholds",
+        "metrics": {
+          "error_rate_pct": 0.01,
+          "error_rate_threshold_pct": 1.0,
+          "latency_p95_ms": 120,
+          "latency_threshold_ms": 500,
+          "throughput_rps": 850,
+          "status": "HEALTHY"
+        }
+      },
+      {
+        "name": "deploy_full",
+        "status": "COMPLETED",
+        "duration_seconds": 30,
+        "details": "100% traffic routed",
+        "traffic_routed_pct": 100
+      }
+    ],
+    "final_status": "SUCCESS",
+    "total_duration_seconds": 142
+  }
+}
+]
