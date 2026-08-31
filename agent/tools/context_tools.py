@@ -7,20 +7,31 @@ In Layer 2 (connected), they call the Impact Context Server via MCP.
 """
 
 import logging
-from google.adk.tools import MCPTool, ToolContext
+import os
+from google.adk.tools import FunctionTool, ToolContext
 
 logger = logging.getLogger("changeguard-agent.context")
 
+LAYER_MODE = os.getenv("LAYER_MODE", "mock")
 
 # ═══════════════════════════════════════════════════════════════
 # compare_api_contracts
 # ═══════════════════════════════════════════════════════════════
 
-async def compare_contracts_handler(params: dict, context: ToolContext) -> dict:
+async def compare_api_contracts_handler(params: dict, context: ToolContext) -> dict:
     """
     Compare API contract versions. Returns breaking changes.
     Layer 1: mock data. Layer 2: MCP call to Impact Context Server.
     """
+    if LAYER_MODE == "live":
+        logger.info("Delegating compare_api_contracts to Secure Broker...")
+        broker_response = await context.call_tool(
+            "secure-broker",
+            "authorize_tool_call",
+            {"agent_id": context.agent_info.id, "tool_name": "compare_api_contracts", "session_id": params.get("pr_id", "context"), "payload": params},
+        )
+        return broker_response.get("forward_result") or broker_response
+
     service = params.get("service", "")
 
     logger.info("compare_api_contracts: %s", service)
@@ -50,26 +61,24 @@ async def compare_contracts_handler(params: dict, context: ToolContext) -> dict:
     }
 
 
-compare_api_contracts_tool = MCPTool(
-    name="compare_api_contracts",
-    description="Compare two API contract versions. Returns breaking changes and new fields.",
-    handler=compare_contracts_handler,
-    input_schema={
-        "type": "object",
-        "properties": {
-            "service": {"type": "string", "description": "Service name"},
-        },
-        "required": ["service"],
-    },
-)
+compare_api_contracts_tool = FunctionTool(func=compare_api_contracts_handler)
 
 
 # ═══════════════════════════════════════════════════════════════
 # find_affected_consumers
 # ═══════════════════════════════════════════════════════════════
 
-async def find_consumers_handler(params: dict, context: ToolContext) -> dict:
+async def find_affected_consumers_handler(params: dict, context: ToolContext) -> dict:
     """Find consumers of a service."""
+    if LAYER_MODE == "live":
+        logger.info("Delegating find_affected_consumers to Secure Broker...")
+        broker_response = await context.call_tool(
+            "secure-broker",
+            "authorize_tool_call",
+            {"agent_id": context.agent_info.id, "tool_name": "find_affected_consumers", "session_id": params.get("pr_id", "context"), "payload": params},
+        )
+        return broker_response.get("forward_result") or broker_response
+
     service = params.get("service", "")
 
     logger.info("find_affected_consumers: %s", service)
@@ -98,26 +107,24 @@ async def find_consumers_handler(params: dict, context: ToolContext) -> dict:
     return result
 
 
-find_affected_consumers_tool = MCPTool(
-    name="find_affected_consumers",
-    description="Find all consumers (internal and external) of a service.",
-    handler=find_consumers_handler,
-    input_schema={
-        "type": "object",
-        "properties": {
-            "service": {"type": "string", "description": "Service name"},
-        },
-        "required": ["service"],
-    },
-)
+find_affected_consumers_tool = FunctionTool(func=find_affected_consumers_handler)
 
 
 # ═══════════════════════════════════════════════════════════════
 # get_business_criticality
 # ═══════════════════════════════════════════════════════════════
 
-async def get_criticality_handler(params: dict, context: ToolContext) -> dict:
+async def get_business_criticality_handler(params: dict, context: ToolContext) -> dict:
     """Get TIER and criticality for a service."""
+    if LAYER_MODE == "live":
+        logger.info("Delegating get_business_criticality to Secure Broker...")
+        broker_response = await context.call_tool(
+            "secure-broker",
+            "authorize_tool_call",
+            {"agent_id": context.agent_info.id, "tool_name": "get_business_criticality", "session_id": params.get("pr_id", "context"), "payload": params},
+        )
+        return broker_response.get("forward_result") or broker_response
+
     service = params.get("service", "")
 
     logger.info("get_business_criticality: %s", service)
@@ -159,18 +166,7 @@ async def get_criticality_handler(params: dict, context: ToolContext) -> dict:
     return result
 
 
-get_business_criticality_tool = MCPTool(
-    name="get_business_criticality",
-    description="Get TIER level, max downtime, and business function for a service.",
-    handler=get_criticality_handler,
-    input_schema={
-        "type": "object",
-        "properties": {
-            "service": {"type": "string", "description": "Service name"},
-        },
-        "required": ["service"],
-    },
-)
+get_business_criticality_tool = FunctionTool(func=get_business_criticality_handler)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -182,6 +178,15 @@ async def get_test_catalog_handler(params: dict, context: ToolContext) -> dict:
     Get test counts for a service.
     Returns 0 for new endpoints → triggers CRITICAL + POSTPONE.
     """
+    if LAYER_MODE == "live":
+        logger.info("Delegating get_test_catalog to Secure Broker...")
+        broker_response = await context.call_tool(
+            "secure-broker",
+            "authorize_tool_call",
+            {"agent_id": context.agent_info.id, "tool_name": "get_test_catalog", "session_id": params.get("pr_id", "context"), "payload": params},
+        )
+        return broker_response.get("forward_result") or broker_response
+
     service = params.get("service", "")
     affected_area = params.get("affected_area", "")
 
@@ -222,16 +227,4 @@ async def get_test_catalog_handler(params: dict, context: ToolContext) -> dict:
     return result
 
 
-get_test_catalog_tool = MCPTool(
-    name="get_test_catalog",
-    description="Get available test counts for a service. Returns 0 for new endpoints.",
-    handler=get_test_catalog_handler,
-    input_schema={
-        "type": "object",
-        "properties": {
-            "service": {"type": "string", "description": "Service name"},
-            "affected_area": {"type": "string", "description": "Specific endpoint or area"},
-        },
-        "required": ["service"],
-    },
-)
+get_test_catalog_tool = FunctionTool(func=get_test_catalog_handler)
