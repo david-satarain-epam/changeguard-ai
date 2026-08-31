@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChangeGuard AI - Dashboard</title>
+  <style>
+    :root{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;background:#f1f5f9}
+    body{margin:24px}.container{max-width:1200px;margin:auto}h1{font-size:24px}
+    .pr-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;margin:18px 0;box-shadow:0 6px 16px #0206170f}
+    .header{display:flex;justify-content:space-between;gap:16px;align-items:center}.title{font-size:18px;font-weight:700}
+    .badge{border-radius:999px;color:#fff;font-weight:700;padding:6px 12px;white-space:nowrap}.low{background:#16a34a}.medium{background:#f59e0b}.high{background:#dc2626}.none{background:#64748b}
+    .box{background:#f8fafc;border-left:4px solid #2563eb;border-radius:8px;padding:10px 12px;margin-top:10px}
+    .grid{display:grid;gap:8px;margin-top:12px}.row{border:1px solid #e2e8f0;border-radius:8px;padding:10px}.label{font-weight:700}.muted{color:#64748b}ul{margin:6px 0 0 18px}
+  </style>
+</head>
+<body><main class="container"><h1>ChangeGuard AI - Pull Request Overview</h1><div id="content">Loading...</div></main>
+<script>
+async function load(){
+  const container=document.getElementById('content');
+  try{
+    const res={ok:true,status:200};
+    const text = await res.text();
+    render(JSON.parse(text),container);
+  }catch(err){container.innerHTML='<p class="muted">Error loading report: '+escapeHtml(err)+'</p>';}
+}
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function list(value){return Array.isArray(value)&&value.length?'<ul>'+value.map(x=>'<li>'+escapeHtml(x)+'</li>').join('')+'</ul>':'';}
+function render(items,container){
+  if(!Array.isArray(items)||!items.length){container.innerHTML='<p class="muted">No analyses found.</p>';return;}
+  container.innerHTML=items.map(item=>{
+    const meta=item.report_metadata||{};const impact=item.impact_analysis||{};const pipe=item.pipeline_execution||{};
+    const id=item.pr_id||meta.pr_id||'';const title=item.pr_title||meta.pr_title||'';const risk=impact.risk_score||item.risk_score||'';
+    const decision=(impact.decision||item.decision||'').toUpperCase();const strategy=impact.strategy||item.deployment_strategy||'';
+    const cls=decision==='APPROVE'?'low':decision==='ROLLOUT'?'medium':decision==='POSTPONE'?'high':'none';
+    const services=impact.affected_services||item.affected_services||[];const consumers=impact.affected_consumers_count??item.affected_consumers_count;
+    const reason=impact.reasoning||item.reasoning||'';const stages=Array.isArray(pipe.stages)?pipe.stages:[];
+    return '<article class="pr-card"><div class="header"><div class="title">PR #'+escapeHtml(id)+': '+escapeHtml(title)+'</div><div class="badge '+cls+'">'+escapeHtml(decision||'UNKNOWN')+'</div></div>'+
+      '<div class="box"><b>Risk:</b> '+escapeHtml(risk)+(reason?'<div>'+escapeHtml(reason)+'</div>':'')+'</div>'+
+      '<div class="box"><b>Deployment Strategy:</b> '+escapeHtml(strategy)+'</div>'+ (consumers!=null?'<div class="grid"><div class="row"><span class="label">Affected consumers:</span> '+escapeHtml(consumers)+'</div></div>':'')+
+      (services.length?'<div class="grid"><div class="row"><span class="label">Affected services:</span>'+list(services)+'</div></div>':'')+
+      (stages.length?'<div class="grid"><div class="row"><span class="label">Pipeline: </span>'+escapeHtml(pipe.final_status||'')+list(stages.map(s=>(s.name||'stage')+': '+(s.status||'')+(s.details?' - '+s.details:'')))+'</div></div>':'')+'</article>';
+  }).join('');
+}
+load();
+</script></body></html>

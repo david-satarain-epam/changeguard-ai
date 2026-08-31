@@ -1,255 +1,264 @@
-# PR Risk Assessor — Multi-Agent System
+# ChangeGuard AI Agent
 
-An AI-powered tool that fetches all open Pull Requests from a GitHub repository, scores each one for deployment risk, and produces a structured JSON report with a recommended testing and deployment strategy. Built with [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/) and powered by Gemini.
+The ChangeGuard agent analyzes open GitHub pull requests, calculates deterministic deployment risk, delegates authorized CI/CD operations through the Secure Broker MCP server, and produces a final HTML report attached to the ADK session.
 
----
+## Responsibilities
 
-## Architecture
+The agent is responsible for:
 
-The system runs in two phases. Phase 1 is a conversational agent that collects the repository URL from the user. Phase 2 is a three-node ADK Workflow that fetches, scores, and reports on every open PR.
+- Receiving a GitHub repository URL.
+- Fetching up to 10 recent open pull requests.
+- Calculating risk from deterministic Python rules.
+- Identifying affected services and consumers.
+- Building a test and deployment strategy.
+- Requesting authorization before live CI/CD operations.
+- Producing the final structured report.
+- Attaching `changeguard-report.html` using the packaged dashboard template.
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║  PHASE 1 — input_app                                         ║
-║                                                              ║
-║  ┌─────────────────────────────────────────────────────┐     ║
-║  │  input_agent  (Gemini)                              │     ║
-║  │                                                     │     ║
-║  │  "Please provide your GitHub repository URL:"       │     ║
-║  │   → validates and returns the URL                   │     ║
-║  └─────────────────────────────────────────────────────┘     ║
-╚══════════════════════════════════════════════════════════════╝
-                           │
-                    repo URL passed
-                           │
-                           ▼
-╔══════════════════════════════════════════════════════════════╗
-║  PHASE 2 — main_app  (ADK Workflow)                          ║
-║                                                              ║
-║  ┌─────────────────────────────────────────────────────┐     ║
-║  │  fetch_prs_node  (deterministic)                    │     ║
-║  │                                                     │     ║
-║  │  GET /repos/{owner}/{repo}/pulls?state=open         │     ║
-║  │  → top 10 open PRs (title, description, PR number)  │     ║
-║  │  → falls back to mock data on any API failure       │     ║
-║  └───────────────────────┬─────────────────────────────┘     ║
-║                          │  list of PRs                      ║
-║                          ▼                                   ║
-║  ┌─────────────────────────────────────────────────────┐     ║
-║  │  assess_prs_node  (deterministic)                   │     ║
-║  │                                                     │     ║
-║  │  For each PR:                                       │     ║
-║  │    • keyword-based risk scoring                     │     ║
-║  │    • service identification                         │     ║
-║  │    • test plan generation                           │     ║
-║  │    • CI/CD pipeline simulation (branched by risk)   │     ║
-║  └───────────────────────┬─────────────────────────────┘     ║
-║                          │  scored assessments               ║
-║                          ▼                                   ║
-║  ┌─────────────────────────────────────────────────────┐     ║
-║  │  synthesis_agent  (Gemini)                          │     ║
-║  │                                                     │     ║
-║  │  • writes reasoning narrative for each PR           │     ║
-║  │  • renders the report_html placeholder card         ║     ║
-║  │  • assembles the final JSON array                   │     ║
-║  └─────────────────────────────────────────────────────┘     ║
-╚══════════════════════════════════════════════════════════════╝
-                           │
-                    JSON array output
+The agent does not call the CI/CD MCP server directly. All live execution goes through the Secure Broker:
+
+```text
+Agent -> Secure Broker MCP -> Adaptive CI/CD MCP -> GitHub Actions / Cloud Run
 ```
 
-### Design principles
+## Current Workflow
 
-- **Deterministic first, LLM last.** All risk scoring, service identification, pipeline simulation, and structured data assembly happen in deterministic Python nodes. Gemini only fills in the narrative (`reasoning`) and the HTML card — fields that benefit from natural language.
-- **Mock fallback at every boundary.** If the GitHub API is unavailable or returns no PRs, the system substitutes realistic mock data so the full pipeline always runs.
-- **No credentials required.** Works with any public GitHub repository without a token.
-
----
-
-## Workflow Nodes in Detail
-
-### `input_agent` (Gemini Agent — Phase 1)
-
-A standalone conversational agent that runs before the main workflow. It receives the user's message and either returns a valid GitHub repository URL or asks for one. Runs as its own ADK `App` so the conversation can complete before the workflow starts.
-
-### `fetch_prs_node` (deterministic)
-
-Calls the GitHub REST API list endpoint:
+```mermaid
+flowchart TD
+    Input[User repository URL] --> Fetch[fetch_prs_node]
+    Fetch --> Assess[assess_prs_node]
+    Assess --> Synthesis[synthesis_agent]
+    Synthesis --> Attach[attach_final_report_node]
+    Attach --> Artifact[changeguard-report.html]
+    Synthesis -->|live CI/CD authorization| Broker[Secure Broker MCP]
+    Broker --> CICD[Adaptive CI/CD MCP]
 ```
-GET https://api.github.com/repos/{owner}/{repo}/pulls?state=open&per_page=10&sort=created&direction=desc
+
+The exported `root_agent` is the `pr_risk_workflow`. It starts at `fetch_prs_node`, not at `input_agent`. `input_agent` remains available as a separate ADK `App` for URL-validation scenarios, but it is not currently connected as a workflow edge in `root_agent`.
+
+## Workflow Nodes
+
+### `fetch_prs_node`
+
+Extracts a repository URL from the incoming value and calls `fetch_github_prs`.
+
+GitHub endpoint:
+
+```text
+GET https://api.github.com/repos/{owner}/{repo}/pulls
+    ?state=open&per_page=10&sort=created&direction=desc
 ```
-Returns at most 10 PRs with: `pr_id`, `pr_title`, `description`, and `pr_url`. Changed files and diff sizes are **not** fetched (would require one API call per PR). Falls back to a built-in set of 4 mock PRs if the request fails or the repository has no open PRs.
 
-### `assess_prs_node` (deterministic)
-
-Loops over every PR returned by `fetch_prs_node` and runs two functions:
-
-**`calculate_pr_risk`** — scores risk from title and description using keyword matching:
-
-| Step | Rule | Effect |
-|---|---|---|
-| 1 | High-risk keywords in text | Baseline → HIGH |
-| 2 | Medium-risk keywords in text | Baseline → MEDIUM |
-| 3 | Neither | Baseline → LOW |
-| 4 | Breaking change keywords detected | +1 level |
-| 5 | TIER 1 service identified | +1 level |
-| 6 | 3 or more services affected | +1 level |
-
-Risk levels cap at CRITICAL. The decision and deployment strategy are derived from the final level:
-
-| Risk | Decision | Strategy |
-|---|---|---|
-| LOW | APPROVE | DIRECT |
-| MEDIUM | APPROVE | GATED |
-| HIGH | ROLLOUT | CANARY |
-| CRITICAL | POSTPONE | NONE |
-
-**`simulate_pipeline`** — builds the `pipeline_execution` block based on the deployment strategy:
-
-| Strategy | Stages |
-|---|---|
-| DIRECT | test_suite → security_scan → deploy_full |
-| GATED | test_suite → security_scan → manual_approval → deploy_full |
-| CANARY | test_suite → security_scan → deploy_canary → monitoring → deploy_full |
-| NONE | *(empty — deployment postponed)* |
-
-### `synthesis_agent` (Gemini Agent — Phase 2)
-
-Receives the full assessment data via ADK state injection (`{assessments_data}`). Its responsibilities are narrow: write a 2–3 sentence `reasoning` for each PR and render the `report_html` placeholder card. All numeric fields, risk scores, decisions, and pipeline data are copied unchanged from the deterministic output.
-
----
-
-## Output Format
-
-Each PR in the final JSON array has four top-level keys:
+Each PR contains:
 
 ```json
 {
-  "report_html": "<div ...>...</div>",
+  "pr_id": "847",
+  "pr_title": "Update refund endpoint",
+  "description": "...",
+  "pr_url": "https://github.com/owner/repo/pull/847"
+}
+```
+
+The GitHub helper uses `GITHUB_TOKEN` when available. If the URL is invalid, the API fails, or no open PRs are returned, it falls back to the built-in mock payloads.
+
+### `assess_prs_node`
+
+Runs deterministic scoring for every fetched PR using `tools/risk_analyzer.py`. It produces:
+
+- `risk_score`: `LOW`, `MEDIUM`, `HIGH`, or `CRITICAL`.
+- `decision`: `APPROVE`, `ROLLOUT`, or `POSTPONE`.
+- `deployment_strategy`: `DIRECT`, `GATED`, `CANARY`, or `NONE`.
+- Affected services and consumer count.
+- Test plan and suggested tests.
+- Escalation reasons and context flags.
+- A `pipeline_execution` simulation used as the initial assessment data.
+
+The deterministic mapping is:
+
+| Risk | Decision | Strategy |
+|---|---|---|
+| `LOW` | `APPROVE` | `DIRECT` |
+| `MEDIUM` | `APPROVE` | `GATED` |
+| `HIGH` | `ROLLOUT` | `CANARY` |
+| `CRITICAL` | `POSTPONE` | `NONE` |
+
+### `synthesis_agent`
+
+Receives `{assessments_data}` through ADK state injection and creates the final JSON array. It must preserve the deterministic risk and pipeline fields, add specific reasoning, and request live execution through the broker when required by the strategy.
+
+The broker tool is the only MCP toolset registered on this agent. Its published tools are:
+
+- `authorize_tool_call`
+- `get_audit_log`
+
+For a live operation, the agent sends `agent_id=change-impact-agent`, the exact CI/CD tool name, a session ID, and the tool payload to `authorize_tool_call`. It must not invoke CI/CD directly.
+
+### `attach_final_report_node`
+
+Runs after `synthesis_agent` and:
+
+1. Normalizes the synthesis output to a JSON array.
+2. Loads `templates/app_final.html`.
+3. Embeds the final report data into the HTML.
+4. Removes the external `contracts/agent_output.json` dependency.
+5. Saves `changeguard-report.html` with MIME type `text/html` through `ctx.save_artifact`.
+
+The file is therefore attached to the current ADK session and can be downloaded from the conversation UI.
+
+## Output Contract
+
+Each report item contains these top-level fields:
+
+```json
+{
+  "report_html": "<div>...</div>",
   "report_metadata": {
-    "workflow_id": "wf-20260830-735",
-    "pr_id": "735",
-    "pr_title": "Add comments to the payment processing module",
+    "workflow_id": "wf-20260830-847",
+    "pr_id": "847",
+    "pr_title": "Update refund endpoint",
     "generated_at": "2026-08-30T00:00:00Z",
     "total_duration_seconds": 102,
     "status": "SUCCESS"
   },
   "impact_analysis": {
-    "risk_score": "LOW",
-    "decision": "APPROVE",
-    "strategy": "DIRECT",
-    "affected_services": ["main-app-repo"],
-    "affected_consumers_count": 0,
+    "risk_score": "HIGH",
+    "decision": "ROLLOUT",
+    "strategy": "CANARY",
+    "affected_services": ["payment-api"],
+    "affected_consumers_count": 12,
     "reasoning": "...",
-    "escalation_log": ["Non-functional or low-impact change"],
+    "escalation_log": [],
     "coverage_gap_detected": false,
-    "context_sources": {
-      "api_contract_checked": false,
-      "consumers_queried": false,
-      "criticality_checked": true,
-      "test_catalog_queried": true
-    }
+    "context_sources": {}
   },
   "pipeline_execution": {
-    "stages": [
-      { "name": "test_suite",    "status": "PASSED",    "duration_seconds": 47 },
-      { "name": "security_scan", "status": "PASSED",    "duration_seconds": 25 },
-      { "name": "deploy_full",   "status": "COMPLETED", "duration_seconds": 30 }
-    ],
+    "stages": [],
     "final_status": "SUCCESS",
     "total_duration_seconds": 102
   }
 }
 ```
 
----
+`report_html` is the per-PR card content. The downloadable artifact is the complete dashboard document generated from the same final output.
 
-## Prerequisites
+## MCP Configuration
 
-- Python 3.12 or 3.14
-- A Google Cloud project with the Vertex AI or Gemini API enabled
-- `gcloud` CLI authenticated (`gcloud auth application-default login`)
+The agent uses ADK's `MCPToolset` with streamable HTTP and connects only to the broker:
 
----
-
-## Setup
-
-### 1. Navigate to this directory
-
-```bash
-cd agent/multiagent_systems
+```env
+BROKER_MCP_URL=https://your-broker-service.run.app/mcp
+LAYER_MODE=live
 ```
 
-### 2. Create and activate a virtual environment
+The broker is configured separately with the downstream CI/CD MCP endpoint:
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
+```env
+CICD_MCP_URL=https://your-cicd-service.run.app/mcp
 ```
 
-### 3. Install dependencies
+This separation keeps authorization and audit enforcement in the broker. The agent should not define a direct `CICD_MCP_URL` toolset.
 
-```bash
-pip install -r support_agent/requirements.txt
+## Environment Variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `GOOGLE_GENAI_USE_VERTEXAI` | Yes for Vertex AI | Select Vertex AI authentication |
+| `GOOGLE_CLOUD_PROJECT` | Yes for Vertex AI | Google Cloud project ID |
+| `GOOGLE_CLOUD_LOCATION` | Yes for Vertex AI | Vertex AI region |
+| `GEMINI_MODEL` or `MODEL` | No | Gemini model; `MODEL` takes precedence |
+| `BROKER_MCP_URL` | For live tools | Secure Broker MCP endpoint |
+| `BROKER_MCP_TOKEN` | If broker is protected | Bearer token for broker MCP |
+| `LAYER_MODE` | No | `mock` or `live` for context delegation |
+| `GITHUB_TOKEN` | Optional for PR reads | GitHub API authentication and higher rate limits |
+
+For Vertex AI, authenticate with Application Default Credentials:
+
+```powershell
+gcloud auth application-default login
 ```
 
-### 4. Configure environment variables
+Do not set `GOOGLE_API_KEY` when using `GOOGLE_GENAI_USE_VERTEXAI=true`.
 
-Create a `.env` file in this directory:
+## Installation
 
-```bash
-# Use Vertex AI backend (true) or direct Gemini API (false)
-GOOGLE_GENAI_USE_VERTEXAI=true
+From the `agent/` directory:
 
-# Your Google Cloud project ID
-GOOGLE_CLOUD_PROJECT=your-project-id
-
-# Region for Vertex AI (e.g. us-central1)
-GOOGLE_CLOUD_LOCATION=us-central1
-
-# Gemini model to use
-MODEL=gemini-2.0-flash
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-> `GITHUB_TOKEN` is not required. The tool targets public repositories using the unauthenticated GitHub API (60 req/hour limit).
+Update `agent/.env` with the project and broker values. The loader reads that file relative to `agent.py`, so startup does not depend on the current working directory.
 
----
+## Running
 
-## Running the Tool
+Use the ADK CLI from the `agent/` directory:
 
-### Conversational mode — agent asks for the URL
-
-```bash
-python3 test_runner.py
+```powershell
+python -m google.adk.cli run .
 ```
 
-```
---- ChangeGuard AI: PR Risk Assessor ---
-Please provide your GitHub repository URL (e.g., https://github.com/owner/repo):
-> https://github.com/alekz7/devops-repo
+The runtime discovers `root_agent` from `agent.py`. Do not use `python agent.py` as the primary runner; that only imports and defines the application.
 
---- Analyzing repository: https://github.com/alekz7/devops-repo ---
-...
-```
+## Testing
 
-### Direct mode — pass the URL as an argument
+From the repository root, with the agent environment active:
 
-```bash
-python3 test_runner.py https://github.com/alekz7/devops-repo
+```powershell
+python -m pytest agent/tests
 ```
 
----
+Focused checks:
 
-## Project Structure
+```powershell
+python -m py_compile agent/agent.py agent/tools/report_renderer.py
+```
 
+Test the HTML renderer independently:
+
+```powershell
+python -c "from agent.tools.report_renderer import render_report_html; print(len(render_report_html([])))"
 ```
-multiagent_systems/
-├── test_runner.py              # Entry point
-├── .env                        # Environment variables (not committed)
-├── support_agent/
-│   ├── agent.py                # input_agent, workflow nodes, synthesis_agent, both Apps
-│   ├── tools.py                # fetch_github_prs, calculate_pr_risk, simulate_pipeline
-│   └── requirements.txt        # Python dependencies
-└── deployment/
-    └── terraform/              # Infrastructure-as-code for cloud deployment
+
+For a live end-to-end run, verify this sequence:
+
+```text
+1. Agent discovers broker tools.
+2. Broker authorizes change-impact-agent.
+3. Broker forwards the operation through MCP to CI/CD.
+4. CI/CD triggers GitHub Actions or Cloud Run.
+5. Agent attaches changeguard-report.html.
 ```
+
+## Directory Layout
+
+```text
+agent/
+├── agent.py                         # ADK workflow and root_agent
+├── .env.example                     # Configuration template
+├── requirements.txt
+├── templates/
+│   └── app_final.html               # Packaged standalone report template
+├── tools/
+│   ├── analyze_pr.py                # PR fetch and risk helpers
+│   ├── context_tools.py             # Context tools and broker delegation
+│   ├── executions_tools.py          # Broker MCPToolset
+│   ├── github_api.py                # GitHub repository PR listing
+│   ├── pipeline_simulator.py        # Deterministic local pipeline output
+│   ├── report_renderer.py           # HTML artifact generation
+│   └── risk_analyzer.py             # Keyword-based scoring helper
+├── risk_engine/                     # Shared deterministic risk rules
+├── pr_mocks/                        # Mock PR payloads
+└── tests/                           # Agent and risk-engine tests
+```
+
+## Operational Notes
+
+- `agent/.env` is local configuration and must not be committed.
+- Live CI/CD requires the broker and CICD services to be reachable and correctly configured.
+- The CICD server must use `CICD_MODE=live` to trigger GitHub Actions or Cloud Run operations.
+- A simulated `pipeline_execution` value is available during deterministic assessment; live execution results should replace it before the final report claims success.
+- The HTML artifact is generated from the final synthesis output, not from a separate JSON file.

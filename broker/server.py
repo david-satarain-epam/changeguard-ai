@@ -17,9 +17,10 @@ Usage:
 
 import os
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -27,7 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("changeguard-broker")
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 from services.policy_engine import PolicyEngine
 from services.jit_credentials import JitCredentialGenerator
 from services.audit_logger import AuditLogger
@@ -48,7 +49,12 @@ logger.info("Services initialized: %d policies loaded", len(policy_engine.polici
 # MCP SERVER
 # ═══════════════════════════════════════════════════════════════
 
-server = MCPServer("secure-broker")
+server = FastMCP(
+    "secure-broker",
+    host="0.0.0.0",
+    port=int(os.getenv("PORT", "8080")),
+    stateless_http=True,
+)
 
 # Register tools
 @server.tool()

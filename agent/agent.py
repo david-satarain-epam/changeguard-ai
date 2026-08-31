@@ -1,6 +1,7 @@
 """ChangeGuard AI — PR Risk Assessment Workflow."""
 
 import os
+from pathlib import Path
 from typing import Any
 import dotenv
 from google.adk import Agent
@@ -9,17 +10,22 @@ from google.adk import Workflow
 from google.adk.apps import App
 from google.adk.events.event import Event
 from google.adk.workflow import node
+from google.genai import types
 
 try:
     from .tools import fetch_github_prs, calculate_pr_risk, simulate_pipeline
+    from .tools.executions_tools import broker_toolset
+    from .tools.report_renderer import html_artifact, render_report_html
 except ImportError:  # pragma: no cover
     from tools.github_api import fetch_github_prs
     from tools.risk_analyzer import calculate_pr_risk
     from tools.pipeline_simulator import simulate_pipeline
+    from tools.executions_tools import broker_toolset
+    from tools.report_renderer import html_artifact, render_report_html
 
-dotenv.load_dotenv()
+dotenv.load_dotenv(Path(__file__).with_name(".env"))
 
-MODEL = os.environ.get("MODEL", "gemini-2.0-flash")
+MODEL = os.environ.get("MODEL", os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"))
 
 
 # ─── Phase 1: Input Agent ────────────────────────────────────────
@@ -88,6 +94,7 @@ def assess_prs_node(ctx: Context, node_input: Any) -> Event:
 synthesis_agent = Agent(
     name="synthesis_agent",
     model=MODEL,
+    tools=[broker_toolset],
     instruction="""
 You are the final reporting agent for ChangeGuard AI.
 
@@ -129,8 +136,34 @@ STRICT RULES:
 - Never modify risk_score, decision, strategy, or any numeric field from the input.
 - The reasoning must be specific to this PR — reference its actual title, services, and risk factors.
 - For report_html, substitute all placeholders ([PR_TITLE], [RISK_COLOR], etc.) with real values.
+ - For any live CI/CD operation, call broker_toolset.authorize_tool_call with agent_id "change-impact-agent",
+     the exact CICD tool name, session_id, and a payload matching that tool's arguments.
+ - Never call a CICD tool directly. The broker is the only route to GitHub Actions and Cloud Run operations.
+ - Only proceed with the requested operation when the broker response has authorized=true.
+ - Before returning the report, execute the pipeline for each assessment through the broker:
+     run_tests first; for CANARY use deploy_canary then monitor then deploy_full; for GATED use deploy_full
+     only after tests; for DIRECT use deploy_full after tests; for NONE do not deploy.
+ - Use these payloads: run_tests={test_plan, pr_id}, deploy_canary={percentage, service},
+     monitor={duration_minutes, service}, deploy_full={service}, rollback={service, rollback_version}.
+ - Copy the actual broker forward_result into pipeline_execution and never claim success when authorization
+     or execution returned an error.
 """,
 )
+
+
+@node(name="attach_final_report_node")
+async def attach_final_report_node(ctx: Context, node_input: Any) -> Event:
+    """Attach the synthesis output as a standalone HTML dashboard artifact."""
+    report_html = render_report_html(node_input)
+    await ctx.save_artifact(
+        "changeguard-report.html",
+        html_artifact(report_html),
+        custom_metadata={"mime_type": "text/html", "source": "app_final.html"},
+    )
+    return Event(
+        state={"final_report_html": "changeguard-report.html"},
+        output=node_input,
+    )
 
 
 # ─── Workflow ────────────────────────────────────────────────────
@@ -141,6 +174,7 @@ pr_workflow = Workflow(
         ("START",         fetch_prs_node),
         (fetch_prs_node,  assess_prs_node),
         (assess_prs_node, synthesis_agent),
+        (synthesis_agent, attach_final_report_node),
     ],
 )
 

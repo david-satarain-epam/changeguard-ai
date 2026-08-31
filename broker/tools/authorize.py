@@ -6,7 +6,11 @@ Every tool call from any agent passes through here.
 
 import os
 import logging
+import json
+
 import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
 logger = logging.getLogger("changeguard-broker.authorize")
 
@@ -17,7 +21,13 @@ from services.audit_logger import AuditLogger
 # Services are initialized in server.py and passed via closure
 
 CONTEXT_SERVER_URL = os.getenv("CONTEXT_SERVER_URL", "http://localhost:8081")
-CICD_SERVER_URL = os.getenv("CICD_SERVER_URL", "http://localhost:8082")
+CICD_SERVER_URL = os.getenv(
+    "CICD_MCP_URL",
+    os.getenv("CICD_SERVER_URL", "https://changeguard-cicd-511412396970.us-east1.run.app/mcp"),
+)
+CICD_MCP_HEADERS = {}
+if token := os.getenv("CICD_MCP_TOKEN"):
+    CICD_MCP_HEADERS["Authorization"] = f"Bearer {token}"
 
 # Tools that go to Impact Context Server
 CONTEXT_TOOLS = {
@@ -34,6 +44,7 @@ EXECUTION_TOOLS = {
     "monitor",
     "deploy_full",
     "rollback",
+    "pipeline_status",
 }
 
 
@@ -44,6 +55,42 @@ def _get_target_server(tool_name: str) -> str:
     if tool_name in EXECUTION_TOOLS:
         return CICD_SERVER_URL
     return None
+
+
+def _mcp_endpoint(url: str) -> str:
+    """Normalize a configured CICD URL to the streamable HTTP endpoint."""
+    return url if url.rstrip("/").endswith("/mcp") else f"{url.rstrip('/')}/mcp"
+
+
+async def _call_cicd_tool(tool_name: str, payload: dict) -> dict:
+    """Forward an authorized operation through CICD's MCP protocol."""
+    async with httpx.AsyncClient(
+        headers=CICD_MCP_HEADERS or None,
+        timeout=30,
+    ) as http_client:
+        async with streamable_http_client(
+            _mcp_endpoint(CICD_SERVER_URL),
+            http_client=http_client,
+        ) as streams:
+            read_stream, write_stream = streams[:2]
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(tool_name, arguments=payload)
+
+    if getattr(result, "isError", False):
+        return {"error": f"CICD MCP tool '{tool_name}' returned an error"}
+    structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        return structured
+
+    for content in getattr(result, "content", []):
+        text = getattr(content, "text", None)
+        if text:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"result": text}
+    return {}
 
 
 def create_authorize_handler(
@@ -113,14 +160,9 @@ def create_authorize_handler(
         # In Layer 1 (standalone), we return the authorization.
         # In Layer 2 (connected), the Broker forwards the call.
         forward_result = None
-        if target:
+        if tool_name in EXECUTION_TOOLS:
             try:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    response = await client.post(
-                        f"{target}/{tool_name}",
-                        json={"payload": payload, "audit_id": audit_logger.last_id},
-                    )
-                    forward_result = response.json() if response.status_code == 200 else None
+                forward_result = await _call_cicd_tool(tool_name, payload)
             except Exception as e:
                 logger.error("Forward failed: %s", e)
                 forward_result = {"error": str(e)}

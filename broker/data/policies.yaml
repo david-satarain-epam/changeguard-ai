@@ -16,6 +16,7 @@ policies:
       - "monitor"
       - "deploy_full"
       - "rollback"
+      - "pipeline_status"
     scope: "ci-cd-execution"
     max_session_minutes: 30
     token_budget: 50000

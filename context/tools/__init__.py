@@ -1,1 +1,0 @@
-"""Impact context tools."""
