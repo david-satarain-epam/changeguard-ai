@@ -82,7 +82,7 @@ async def analyze_pr_handler(params: dict, context: ToolContext) -> dict:
 
     return {
         "pr_id": pr_id,
-        "title": title,
+        "pr_title": title,
         "risk_score": risk["score"],
         "decision": risk["decision"],
         "affected_services": affected_services,
