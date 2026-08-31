@@ -151,3 +151,8 @@ main_app = App(
     name="support_agent",
     root_agent=pr_workflow,
 )
+
+# root_agent is required by `adk web` to discover and run this agent.
+# When running via the web UI the user types the repo URL directly in
+# the chat box; fetch_prs_node picks it up from the first message.
+root_agent = pr_workflow
