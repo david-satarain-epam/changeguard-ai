@@ -2,9 +2,9 @@
 
 import pytest
 from pathlib import Path
-from broker.services.policy_engine import PolicyEngine
-from broker.services.jit_credentials import JitCredentialGenerator
-from broker.services.audit_logger import AuditLogger
+from services.policy_engine import PolicyEngine
+from services.jit_credentials import JitCredentialGenerator
+from services.audit_logger import AuditLogger
 
 
 @pytest.fixture

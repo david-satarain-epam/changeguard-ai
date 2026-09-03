@@ -1,46 +1,252 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ChangeGuard AI - Dashboard</title>
   <style>
-    :root{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;background:#f1f5f9}
-    body{margin:24px}.container{max-width:1200px;margin:auto}h1{font-size:24px}
-    .pr-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;margin:18px 0;box-shadow:0 6px 16px #0206170f}
-    .header{display:flex;justify-content:space-between;gap:16px;align-items:center}.title{font-size:18px;font-weight:700}
-    .badge{border-radius:999px;color:#fff;font-weight:700;padding:6px 12px;white-space:nowrap}.low{background:#16a34a}.medium{background:#f59e0b}.high{background:#dc2626}.none{background:#64748b}
-    .box{background:#f8fafc;border-left:4px solid #2563eb;border-radius:8px;padding:10px 12px;margin-top:10px}
-    .grid{display:grid;gap:8px;margin-top:12px}.row{border:1px solid #e2e8f0;border-radius:8px;padding:10px}.label{font-weight:700}.muted{color:#64748b}ul{margin:6px 0 0 18px}
+    body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#f1f5f9; color:#0f172a; margin:24px; }
+    .container { max-width:1200px; margin:0 auto; }
+    h1 { font-size:24px; margin-bottom:12px }
+    .pr-card { background:#fff; border-radius:12px; padding:18px; margin-bottom:18px; box-shadow:0 6px 16px rgba(2,6,23,0.06); border:1px solid #e6e6e6 }
+    .card-header { display:flex; justify-content:space-between; align-items:center; gap:12px }
+    .card-title { font-size:18px; font-weight:700; margin:0 }
+    .card-author { color:#475569; font-size:0.9rem }
+    .risk-badge { display:inline-flex; align-items:center; justify-content:center; padding:6px 12px; border-radius:999px; font-weight:700; color:white }
+    .risk-badge.high { background:#dc2626 }
+    .risk-badge.medium { background:#f59e0b }
+    .risk-badge.low { background:#16a34a }
+    .risk-badge.critical { background:#8b0000 }
+    .risk-badge.none { background:#64748b }
+    .strategy-box { background:#f8fafc; border-left:4px solid #2563eb; padding:10px 12px; border-radius:8px; margin-top:10px }
+    .impact-grid { display:grid; gap:8px; margin-top:12px }
+    .impact-row { background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:10px; color:#0f172a }
+    .impact-label { font-weight:700; color:#334155; margin-right:8px }
+    .small-list { margin:6px 0 0 18px; color:#475569 }
+    .muted { color:#64748b }
+    .btn-white { display:inline-flex; align-items:center; gap:8px; padding:8px 10px; background:#ffffff; color:#0f172a; border-radius:8px; border:1px solid #cbd5e1; cursor:pointer }
+    pre { background:#0f172a; color:#e6eef8; padding:10px; border-radius:6px; overflow:auto }
+    .status-pill { display:inline-block; border-radius:999px; padding:5px 10px; font-size:12px; font-weight:700; color:#fff }
+    .status-success { background:#16a34a }
+    .status-failed { background:#dc2626 }
+    .status-warning { background:#d97706 }
+    .status-info { background:#2563eb }
+    .status-pending { background:#64748b }
+    .stage-row { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-top:8px }
+    .stage-name { font-weight:700 }
+    .stage-meta { font-size:12px; color:#64748b; margin-top:4px }
+    .chip { background:#e0f2fe; color:#075985; border-radius:999px; padding:4px 8px; font-size:12px; font-weight:600 }
   </style>
 </head>
-<body><main class="container"><h1>ChangeGuard AI - Pull Request Overview</h1><div id="content">Loading...</div></main>
-<script>
-async function load(){
-  const container=document.getElementById('content');
-  try{
-    const res={ok:true,status:200};
-    const text = await res.text();
-    render(JSON.parse(text),container);
-  }catch(err){container.innerHTML='<p class="muted">Error loading report: '+escapeHtml(err)+'</p>';}
-}
-function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function list(value){return Array.isArray(value)&&value.length?'<ul>'+value.map(x=>'<li>'+escapeHtml(x)+'</li>').join('')+'</ul>':'';}
-function render(items,container){
-  if(!Array.isArray(items)||!items.length){container.innerHTML='<p class="muted">No analyses found.</p>';return;}
-  container.innerHTML=items.map(item=>{
-    const meta=item.report_metadata||{};const impact=item.impact_analysis||{};const pipe=item.pipeline_execution||{};
-    const id=item.pr_id||meta.pr_id||'';const title=item.pr_title||meta.pr_title||'';const risk=impact.risk_score||item.risk_score||'';
-    const decision=(impact.decision||item.decision||'').toUpperCase();const strategy=impact.strategy||item.deployment_strategy||'';
-    const cls=decision==='APPROVE'?'low':decision==='ROLLOUT'?'medium':decision==='POSTPONE'?'high':'none';
-    const services=impact.affected_services||item.affected_services||[];const consumers=impact.affected_consumers_count??item.affected_consumers_count;
-    const reason=impact.reasoning||item.reasoning||'';const stages=Array.isArray(pipe.stages)?pipe.stages:[];
-    return '<article class="pr-card"><div class="header"><div class="title">PR #'+escapeHtml(id)+': '+escapeHtml(title)+'</div><div class="badge '+cls+'">'+escapeHtml(decision||'UNKNOWN')+'</div></div>'+
-      '<div class="box"><b>Risk:</b> '+escapeHtml(risk)+(reason?'<div>'+escapeHtml(reason)+'</div>':'')+'</div>'+
-      '<div class="box"><b>Deployment Strategy:</b> '+escapeHtml(strategy)+'</div>'+ (consumers!=null?'<div class="grid"><div class="row"><span class="label">Affected consumers:</span> '+escapeHtml(consumers)+'</div></div>':'')+
-      (services.length?'<div class="grid"><div class="row"><span class="label">Affected services:</span>'+list(services)+'</div></div>':'')+
-      (stages.length?'<div class="grid"><div class="row"><span class="label">Pipeline: </span>'+escapeHtml(pipe.final_status||'')+list(stages.map(s=>(s.name||'stage')+': '+(s.status||'')+(s.details?' - '+s.details:'')))+'</div></div>':'')+'</article>';
-  }).join('');
-}
-load();
-</script></body></html>
+<body>
+  <div class="container">
+    <h1>ChangeGuard AI — Pull Request Overview</h1>
+    <div id="content">Loading...</div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
+  <script>
+  async function load() {
+    const container = document.getElementById('content');
+    try {
+      const res = { ok: true, status: 200 };
+      const text = await res.text();
+      render(JSON.parse(text), container);
+    } catch (err) {
+      container.innerHTML = '<div class="muted">Error loading report: ' + escapeHtml(err) + '</div>';
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+    });
+  }
+
+  function normalizeDate(value) {
+    if (!value) return new Date().toISOString();
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+  }
+
+  function durationText(value) {
+    const seconds = Number(value || 0);
+    if (!Number.isFinite(seconds) || seconds <= 0) return '0s';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return mins ? `${mins}m ${secs}s` : `${secs}s`;
+  }
+
+  function stageDetail(stage) {
+    if (!stage || typeof stage !== 'object') return 'Executed';
+    if (stage.details) return stage.details;
+    const total = stage.total ?? stage.total_tests ?? null;
+    const passed = stage.passed ?? stage.passed_tests ?? null;
+    if (total !== null && passed !== null) return `${passed}/${total} tests passed`;
+    if (stage.conclusion) return `GitHub Actions: ${String(stage.conclusion).toLowerCase()}` + (stage.run_id ? ` • run #${stage.run_id}` : '');
+    if (stage.message) return stage.message;
+    if (stage.summary) return stage.summary;
+    if (stage.error) return stage.error;
+    if (stage.status) return String(stage.status).toUpperCase();
+    return 'Executed';
+  }
+
+  function renderStages(stages) {
+    if (!Array.isArray(stages) || !stages.length) return '';
+    return '<div class="impact-grid"><div class="impact-row"><span class="impact-label">Pipeline execution</span>' + stages.map(stage => {
+      const name = stage.name || stage.workflow_name || 'Stage';
+      const status = String(stage.status || stage.workflow_status || stage.conclusion || 'UNKNOWN').toUpperCase();
+      const detail = stageDetail(stage);
+      const duration = Number(stage.duration_seconds ?? stage.duration ?? 0);
+      const statusClass = {
+        SUCCESS: 'status-success',
+        COMPLETED: 'status-success',
+        PASSED: 'status-success',
+        FAILED: 'status-failed',
+        FAILURE: 'status-failed',
+        CANCELLED: 'status-failed',
+        IN_PROGRESS: 'status-warning',
+        RUNNING: 'status-warning',
+        PENDING_APPROVAL: 'status-pending',
+        POSTPONED: 'status-info',
+        UNKNOWN: 'status-info'
+      }[status] || 'status-info';
+      return '<div class="stage-row"><div><div class="stage-name">' + escapeHtml(name) + '</div><div class="stage-meta">' + escapeHtml(detail) + '</div></div><div style="text-align:right"><div class="status-pill ' + statusClass + '">' + escapeHtml(status) + '</div><div class="stage-meta">' + escapeHtml(durationText(duration)) + '</div></div></div>';
+    }).join('') + '</div></div>';
+  }
+
+  function renderContextSources(value) {
+    if (!value || typeof value !== 'object' || !Object.keys(value).length) return '';
+    return '<div class="impact-grid"><div class="impact-row"><span class="impact-label">Context sources</span><div class="small-list">' + Object.keys(value).map(k => '<span class="chip">' + escapeHtml(k) + '</span>').join(' ') + '</div></div></div>';
+  }
+
+  function render(items, container) {
+    if (!Array.isArray(items) || !items.length) {
+      container.innerHTML = '<div class="muted">No analyses found.</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(item => {
+      const meta = item.report_metadata || {};
+      const impact = item.impact_analysis || {};
+      const pipe = item.pipeline_execution || {};
+      const prId = item.pr_id || meta.pr_id || '';
+      const title = item.pr_title || meta.pr_title || '';
+      const risk = (impact.risk_score || item.risk_score || 'LOW').toUpperCase();
+      const decision = (impact.decision || item.decision || 'UNKNOWN').toUpperCase();
+      const strategy = impact.strategy || item.deployment_strategy || 'UNKNOWN';
+      const services = Array.isArray(impact.affected_services) ? impact.affected_services : (Array.isArray(item.affected_services) ? item.affected_services : []);
+      const consumers = impact.affected_consumers_count ?? item.affected_consumers_count ?? 0;
+      const reason = impact.reasoning || item.reasoning || '';
+      const escalation = Array.isArray(impact.escalation_log) ? impact.escalation_log : (Array.isArray(item.escalation_log) ? item.escalation_log : []);
+      const coverage = impact.coverage_gap_detected ?? item.coverage_gap_detected ?? false;
+      const contextSources = impact.context_sources || item.context_sources || {};
+      const stages = Array.isArray(pipe.stages) ? pipe.stages.map(stage => ({ ...stage, duration_seconds: stage.duration_seconds ?? stage.duration ?? 0, details: stage.details || stageDetail(stage) })) : [];
+      const finalStatus = (pipe.final_status || meta.status || 'UNKNOWN').toUpperCase();
+      const generatedAt = normalizeDate(meta.generated_at || item.generated_at);
+      const totalDuration = Number(meta.total_duration_seconds ?? pipe.total_duration_seconds ?? stages.reduce((sum, stage) => sum + Number(stage.duration_seconds || 0), 0) ?? 0);
+      const riskMap = { LOW: 'low', MEDIUM: 'medium', HIGH: 'high', CRITICAL: 'critical' };
+      const riskClass = riskMap[risk] || 'none';
+      const card = document.createElement('article');
+      card.className = 'pr-card';
+
+      const header = document.createElement('div');
+      header.className = 'card-header';
+
+      const titleBlock = document.createElement('div');
+      titleBlock.innerHTML = '<div class="card-title">PR #' + escapeHtml(prId) + ': ' + escapeHtml(title) + '</div>';
+      header.appendChild(titleBlock);
+
+      const rightBlock = document.createElement('div');
+      rightBlock.style.display = 'inline-flex';
+      rightBlock.style.alignItems = 'center';
+      rightBlock.style.gap = '10px';
+
+      const badge = document.createElement('div');
+      badge.className = 'risk-badge ' + riskClass;
+      badge.textContent = risk;
+      rightBlock.appendChild(badge);
+
+      const printBtn = document.createElement('button');
+      printBtn.className = 'btn-white print-btn';
+      printBtn.type = 'button';
+      printBtn.textContent = 'Print PDF';
+      printBtn.addEventListener('click', async () => {
+        try {
+          const clone = card.cloneNode(true);
+          clone.querySelectorAll('.print-btn').forEach(btn => btn.remove());
+          if (window.html2pdf) {
+            const opt = {
+              margin: 0.4,
+              filename: `changeguard-pr-${prId || 'report'}.pdf`,
+              image: { type: 'jpeg', quality: 0.98 },
+              html2canvas: { scale: 2 },
+              jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+            };
+            await html2pdf().set(opt).from(clone).save();
+            return;
+          }
+          window.print();
+        } catch (err) {
+          console.error('PDF export failed', err);
+          window.print();
+        }
+      });
+      rightBlock.appendChild(printBtn);
+      header.appendChild(rightBlock);
+      card.appendChild(header);
+
+      const summary = document.createElement('div');
+      summary.className = 'impact-grid';
+      summary.innerHTML = '<div class="impact-row"><span class="impact-label">Decision:</span>' + escapeHtml(decision) + ' &nbsp; <span class="impact-label">Strategy:</span>' + escapeHtml(strategy) + ' &nbsp; <span class="impact-label">Consumers:</span>' + escapeHtml(String(consumers)) + ' &nbsp; <span class="impact-label">Runtime:</span>' + escapeHtml(durationText(totalDuration)) + '</div>';
+      card.appendChild(summary);
+
+      const statusRow = document.createElement('div');
+      statusRow.className = 'impact-grid';
+      const statusClass = {
+        SUCCESS: 'status-success',
+        FAILED: 'status-failed',
+        IN_PROGRESS: 'status-warning',
+        PENDING_APPROVAL: 'status-pending',
+        POSTPONED: 'status-info',
+        CANCELLED: 'status-failed',
+        UNKNOWN: 'status-info'
+      }[finalStatus] || 'status-info';
+      statusRow.innerHTML = '<div class="impact-row"><span class="impact-label">Overall status:</span><span class="status-pill ' + statusClass + '">' + escapeHtml(finalStatus) + '</span><span style="margin-left:12px"><span class="impact-label">Generated:</span>' + escapeHtml(generatedAt) + '</span></div>';
+      card.appendChild(statusRow);
+
+      const riskBox = document.createElement('div');
+      riskBox.className = 'strategy-box';
+      riskBox.innerHTML = '<strong>Risk reasoning:</strong><div style="margin-top:8px">' + escapeHtml(reason || 'No reasoning available.') + '</div>';
+      card.appendChild(riskBox);
+
+      if (services.length) {
+        const servicesDiv = document.createElement('div');
+        servicesDiv.className = 'impact-grid';
+        servicesDiv.innerHTML = '<div class="impact-row"><span class="impact-label">Affected services:</span><ul class="small-list">' + services.map(s => '<li>' + escapeHtml(s) + '</li>').join('') + '</ul></div>';
+        card.appendChild(servicesDiv);
+      }
+
+      if (coverage) {
+        const coverageDiv = document.createElement('div');
+        coverageDiv.className = 'impact-grid';
+        coverageDiv.innerHTML = '<div class="impact-row"><span class="impact-label">Coverage gap detected:</span> One or more paths appear to be untested or newly introduced.</div>';
+        card.appendChild(coverageDiv);
+      }
+
+      if (escalation.length) {
+        const escalationDiv = document.createElement('div');
+        escalationDiv.className = 'impact-grid';
+        escalationDiv.innerHTML = '<div class="impact-row"><span class="impact-label">Escalation log:</span><ul class="small-list">' + escalation.map(item => '<li>' + escapeHtml(String(item)) + '</li>').join('') + '</ul></div>';
+        card.appendChild(escalationDiv);
+      }
+
+      card.insertAdjacentHTML('beforeend', renderStages(stages));
+      card.insertAdjacentHTML('beforeend', renderContextSources(contextSources));
+      return card.outerHTML;
+    }).join('');
+  }
+
+  load();
+  </script>
+</body>
+</html>

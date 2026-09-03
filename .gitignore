@@ -4,6 +4,8 @@ coverage/
 *.egg-info/
 .venv/
 venv/
+.adk/
+.pytest_cache/
 __pycache__/
 *.py[cod]
 .env

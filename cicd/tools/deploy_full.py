@@ -9,11 +9,7 @@ import os
 
 logger = logging.getLogger("changeguard-cicd.deploy_full")
 
-GOOGLE_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-GOOGLE_REGION = os.getenv("GOOGLE_CLOUD_REGION", "us-east1")
-
-
-async def deploy_full_handler(service: str, mode: str = "simulated") -> dict:
+async def deploy_full_handler(service: str, mode: str = "simulated", pr_id: str = "unknown") -> dict:
     logger.info("deploy_full: %s | mode: %s", service, mode)
 
     if mode == "simulated":
@@ -27,13 +23,16 @@ async def deploy_full_handler(service: str, mode: str = "simulated") -> dict:
             "mode": "simulated",
         }
 
-    return await _deploy_full_live(service)
+    from tools.run_tests import dispatch_github_workflow
+    return await dispatch_github_workflow("deploy_full", {"service": service}, pr_id)
 
 
 async def _deploy_full_live(service: str) -> dict:
     """Promote canary revision to 100% traffic."""
-    if not GOOGLE_PROJECT:
-        logger.warning("GOOGLE_CLOUD_PROJECT not set — falling back to simulated")
+    google_project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    google_region = os.getenv("GOOGLE_CLOUD_REGION")
+    if not google_project or not google_region:
+        logger.error("GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_REGION are required for live deployment")
         return await deploy_full_handler(service, "simulated")
 
     try:
@@ -41,7 +40,7 @@ async def _deploy_full_live(service: str) -> dict:
         from google.cloud.run_v2.types import TrafficTarget
 
         client = ServicesClient()
-        service_path = f"projects/{GOOGLE_PROJECT}/locations/{GOOGLE_REGION}/services/{service}"
+        service_path = f"projects/{google_project}/locations/{google_region}/services/{service}"
 
         current = client.get_service(name=service_path)
 

@@ -9,7 +9,6 @@ Tools:
   monitor         — Monitor metrics
   deploy_full     — Full deployment
   rollback        — Emergency rollback
-  pipeline_status — Get pipeline state
 
 Modes:
   simulated — Mock results with realistic timing (hackathon)
@@ -40,7 +39,7 @@ from tools.deploy_canary import deploy_canary_handler
 from tools.monitor import monitor_handler
 from tools.deploy_full import deploy_full_handler
 from tools.rollback import rollback_handler
-from tools.pipeline_status import pipeline_status_handler
+from tools.github_pr import comment_pr_handler, merge_pr_handler
 
 # ═══════════════════════════════════════════════════════════════
 # MCP SERVER
@@ -72,7 +71,7 @@ async def run_tests(test_plan: list, pr_id: str) -> dict:
 
 
 @app.tool()
-async def deploy_canary(percentage: int, service: str) -> dict:
+async def deploy_canary(percentage: int, service: str, pr_id: str = "unknown") -> dict:
     """
     Deploy a canary revision to a percentage of traffic.
     
@@ -83,12 +82,12 @@ async def deploy_canary(percentage: int, service: str) -> dict:
     Returns:
         Deploy result with status and traffic info.
     """
-    return await deploy_canary_handler(percentage, service, MODE)
+    return await deploy_canary_handler(percentage, service, MODE, pr_id)
 
 
 @app.tool()
 async def monitor(duration_minutes: int, service: str,
-                  simulated_error_rate: float = None) -> dict:
+                  simulated_error_rate: float = None, pr_id: str = "unknown") -> dict:
     """
     Monitor canary metrics for a specified duration.
     
@@ -100,11 +99,11 @@ async def monitor(duration_minutes: int, service: str,
     Returns:
         Monitor result with error rate, latency, throughput, status.
     """
-    return await monitor_handler(duration_minutes, service, MODE, simulated_error_rate)
+    return await monitor_handler(duration_minutes, service, MODE, simulated_error_rate, pr_id)
 
 
 @app.tool()
-async def deploy_full(service: str) -> dict:
+async def deploy_full(service: str, pr_id: str = "unknown") -> dict:
     """
     Promote canary to 100% traffic.
     
@@ -114,11 +113,23 @@ async def deploy_full(service: str) -> dict:
     Returns:
         Deploy result.
     """
-    return await deploy_full_handler(service, MODE)
+    return await deploy_full_handler(service, MODE, pr_id)
 
 
 @app.tool()
-async def rollback(service: str, rollback_version: str = "previous") -> dict:
+async def comment_pr(pr_url: str, body: str) -> dict:
+    """Post an approved ChangeGuard assessment as a GitHub pull request comment."""
+    return await comment_pr_handler(pr_url, body)
+
+
+@app.tool()
+async def merge_pr(pr_url: str, merge_method: str = "squash") -> dict:
+    """Merge an approved GitHub pull request using the requested merge method."""
+    return await merge_pr_handler(pr_url, merge_method)
+
+
+@app.tool()
+async def rollback(service: str, rollback_version: str = "previous", pr_id: str = "unknown") -> dict:
     """
     Emergency rollback to previous stable revision.
     
@@ -129,24 +140,10 @@ async def rollback(service: str, rollback_version: str = "previous") -> dict:
     Returns:
         Rollback result.
     """
-    return await rollback_handler(service, rollback_version, MODE)
+    return await rollback_handler(service, rollback_version, MODE, pr_id)
 
 
-@app.tool()
-async def pipeline_status(pipeline_id: str) -> dict:
-    """
-    Get current pipeline state.
-    
-    Args:
-        pipeline_id: Pipeline run identifier.
-    
-    Returns:
-        Pipeline state with stages and final status.
-    """
-    return await pipeline_status_handler(pipeline_id)
-
-
-logger.info("Tools registered: run_tests, deploy_canary, monitor, deploy_full, rollback, pipeline_status")
+logger.info("Tools registered: run_tests, deploy_canary, monitor, deploy_full, rollback, comment_pr, merge_pr")
 logger.info("Mode: %s", MODE)
 
 # ═══════════════════════════════════════════════════════════════

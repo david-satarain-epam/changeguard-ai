@@ -9,12 +9,8 @@ import os
 
 logger = logging.getLogger("changeguard-cicd.rollback")
 
-GOOGLE_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-GOOGLE_REGION = os.getenv("GOOGLE_CLOUD_REGION", "us-east1")
-
-
 async def rollback_handler(service: str, rollback_version: str = "previous",
-                           mode: str = "simulated") -> dict:
+                           mode: str = "simulated", pr_id: str = "unknown") -> dict:
     logger.warning("rollback: %s → %s | mode: %s", service, rollback_version, mode)
 
     if mode == "simulated":
@@ -29,13 +25,18 @@ async def rollback_handler(service: str, rollback_version: str = "previous",
             "mode": "simulated",
         }
 
-    return await _rollback_live(service, rollback_version)
+    from tools.run_tests import dispatch_github_workflow
+    return await dispatch_github_workflow(
+        "rollback", {"service": service, "rollback_revision": rollback_version}, pr_id
+    )
 
 
 async def _rollback_live(service: str, rollback_version: str) -> dict:
     """Restore previous revision to 100% traffic."""
-    if not GOOGLE_PROJECT:
-        logger.warning("GOOGLE_CLOUD_PROJECT not set — falling back to simulated")
+    google_project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    google_region = os.getenv("GOOGLE_CLOUD_REGION")
+    if not google_project or not google_region:
+        logger.error("GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_REGION are required for live rollback")
         return await rollback_handler(service, rollback_version, "simulated")
 
     try:
@@ -43,7 +44,7 @@ async def _rollback_live(service: str, rollback_version: str) -> dict:
         from google.cloud.run_v2.types import TrafficTarget
 
         client = ServicesClient()
-        service_path = f"projects/{GOOGLE_PROJECT}/locations/{GOOGLE_REGION}/services/{service}"
+        service_path = f"projects/{google_project}/locations/{google_region}/services/{service}"
 
         current = client.get_service(name=service_path)
 

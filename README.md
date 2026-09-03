@@ -1,105 +1,94 @@
 # ChangeGuard AI
 
-AI-powered trust layer for pull-request analysis and controlled CI/CD execution.
+ChangeGuard AI is an AI-assisted, human-approved pull-request governance workflow. It analyzes one open GitHub pull request, explains the deployment risk and proposed strategy, pauses for a human decision, and executes approved actions through a secure MCP chain.
 
-ChangeGuard analyzes pull requests, determines their risk, asks the Secure Broker for authorization, and routes approved CI/CD operations through the Adaptive CI/CD MCP server. The final assessment is rendered as a standalone HTML artifact using `agent/templates/app_final.html`.
+The agent never writes to GitHub or calls CI/CD directly. All mutable actions are authorized and audited by the Secure Broker, then performed by the Adaptive CICD MCP server.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    User[User submits repository or PR URL] --> Agent[Change Impact Agent<br/>Google ADK]
-    Agent -->|MCP: authorize_tool_call| Broker[Secure Broker MCP<br/>Policy + JIT credentials + audit]
-    Broker -->|MCP: call_tool| CICD[Adaptive CI/CD MCP]
-    CICD --> GHA[GitHub Actions<br/>Tests]
-    CICD --> CloudRun[Cloud Run<br/>Deployment]
-    CICD --> Monitoring[Cloud Monitoring<br/>Canary metrics]
-    Agent -->|Final assessment JSON| Renderer[Final report renderer]
-    Renderer --> Artifact[changeguard-report.html<br/>ADK session artifact]
+flowchart LR
+    User[User] --> Agent[ChangeGuard ADK Agent]
+    Agent --> Risk[Deterministic Risk Engine]
+    Agent -->|Human approval required| User
+    Agent -->|MCP authorize_tool_call| Broker[Secure Broker MCP]
+    Broker -->|Authorized MCP call| CICD[Adaptive CICD MCP]
+    CICD --> GitHub[GitHub API]
+    CICD --> GHA[GitHub Actions]
+    CICD --> CloudRun[Cloud Run and Monitoring]
+    Agent --> Report[HTML report artifact]
 ```
 
-The agent is the decision-maker. It must not call the CI/CD server directly. The broker is the only execution gateway and is responsible for policy checks, JIT credentials, audit logging, and forwarding authorized requests to CI/CD through MCP.
+## End-to-End Flow
+
+1. The user provides a GitHub pull-request URL: `https://github.com/owner/repository/pull/123`.
+2. The agent reads the PR and changed files from GitHub. A missing, closed, merged, inaccessible, or unreadable PR is rejected with a clear error. The active single-PR path never substitutes mock PR data.
+3. The deterministic risk engine identifies affected services, consumers, coverage gaps, risk level, recommended tests, decision, and strategy.
+4. The agent displays the assessment, an exact preview of the PR comment, and the actions it would take.
+5. ADK pauses the workflow and waits for the user to approve, reject, or clarify the plan in natural language.
+6. If rejected, ChangeGuard produces an analysis-only report with no PR mutation or pipeline execution.
+7. If approved, the agent asks the broker to authorize each action. CICD then posts the assessment comment, merges the PR, and executes the strategy.
+8. The agent attaches `changeguard-report.html` to the ADK session with the audit and pipeline outcome.
 
 ## Components
 
-| Component | Location | Responsibility | Exposed tools |
+| Component | Location | Responsibility | Tools |
 |---|---|---|---|
-| Change Impact Agent | `agent/` | Fetch PRs, calculate deterministic risk, choose a deployment strategy, synthesize the report | `authorize_tool_call` and `get_audit_log` through the broker MCP toolset |
-| Secure Broker MCP | `broker/` | Authorize, audit, issue JIT credentials, and forward execution requests | `authorize_tool_call`, `get_audit_log` |
-| Adaptive CI/CD MCP | `cicd/` | Run tests and deployment operations | `run_tests`, `deploy_canary`, `monitor`, `deploy_full`, `rollback`, `pipeline_status` |
-| Dashboard template | `agent/templates/app_final.html` | Render report data as a standalone HTML document | None |
+| ChangeGuard Agent | `agent/` | Conversation, PR analysis, approval pause/resume, report generation, orchestration | Broker MCP client only |
+| Secure Broker MCP | `broker/` | Policy enforcement, JIT credential issuance, audit logging, forwarding | `authorize_tool_call`, `get_audit_log` |
+| Adaptive CICD MCP | `cicd/` | GitHub PR mutation, GitHub Actions dispatch/polling, deployment and monitoring | `comment_pr`, `merge_pr`, `run_tests`, `deploy_canary`, `monitor`, `deploy_full`, `rollback` |
 
-## Execution Flow
+## Strategies
 
-1. The agent receives a repository URL and fetches its open pull requests from GitHub.
-2. The deterministic risk engine identifies affected services, risk level, decision, strategy, test plan, and coverage gaps.
-3. For live execution, the agent calls the broker's `authorize_tool_call` tool with `agent_id=change-impact-agent`.
-4. The broker validates the policy, creates an audit entry, and calls the corresponding CI/CD MCP tool.
-5. CI/CD runs GitHub Actions and, when applicable, Cloud Run deployment and monitoring operations.
-6. The synthesis agent produces the final JSON report.
-7. The final workflow node embeds that JSON into `app_final.html` and attaches `changeguard-report.html` to the ADK session.
-
-## Deployment Strategies
-
-| Risk level | Decision | Strategy | Expected execution |
+| Risk | Decision | Strategy | Approved execution |
 |---|---|---|---|
-| `LOW` | `APPROVE` | `DIRECT` | Tests, then full deployment |
-| `MEDIUM` | `APPROVE` | `GATED` | Tests, then approved full deployment |
-| `HIGH` | `ROLLOUT` | `CANARY` | Tests, canary deployment, monitoring, then full deployment |
-| `CRITICAL` | `POSTPONE` | `NONE` | No deployment; report the risk and suggested tests |
+| `LOW` | `APPROVE` | `DIRECT` | Comment PR -> merge -> tests -> full deployment |
+| `MEDIUM` | `APPROVE` | `GATED` | Comment PR -> merge -> tests -> full deployment |
+| `HIGH` | `ROLLOUT` | `CANARY` | Comment PR -> merge -> tests -> 10% canary -> monitoring -> full deployment |
+| `CRITICAL` | `POSTPONE` | `NONE` | No deployment; analysis-only recommendation |
+
+The strategy-to-workflow mapping lives in [cicd/data/workflow_policy.yaml](cicd/data/workflow_policy.yaml). GitHub workflows must support `workflow_dispatch` and accept the inputs sent by their corresponding CICD tool.
 
 ## Project Structure
 
 ```text
 changeguard-ai/
-├── agent/
-│   ├── agent.py                         # ADK workflow and root_agent
-│   ├── .env.example                     # Vertex AI and MCP configuration example
-│   ├── requirements.txt
-│   ├── templates/
-│   │   └── app_final.html               # Packaged report template
-│   ├── tools/
-│   │   ├── analyze_pr.py                # PR fetch and analysis helpers
-│   │   ├── context_tools.py             # Context tools and broker delegation
-│   │   ├── executions_tools.py          # Broker MCPToolset configuration
-│   │   ├── github_api.py                # GitHub repository PR listing
-│   │   ├── pipeline_simulator.py        # Local pipeline simulation
-│   │   ├── report_renderer.py           # HTML artifact generation
-│   │   └── risk_analyzer.py             # Legacy-compatible scoring helper
-│   ├── risk_engine/
-│   │   ├── rules.py                     # Risk and service rules
-│   │   ├── services.py                  # Affected-service detection
-│   │   ├── scoring.py                   # Deterministic scoring
-│   │   └── test_plan.py                 # Test-plan generation
-│   ├── pr_mocks/                        # Demo PR payloads
-│   └── tests/                           # Agent and risk-engine tests
-├── broker/
-│   ├── server.py                        # Secure Broker MCP server
-│   ├── tools/authorize.py               # Policy and MCP forwarding
-│   ├── tools/audit.py
-│   ├── services/                        # Policy, JIT, and audit services
-│   ├── data/policies.yaml               # Agent/tool authorization policy
-│   └── tests/
-├── cicd/
-│   ├── server.py                        # Adaptive CI/CD MCP server
-│   ├── tools/                           # Tests, deploy, monitor, rollback
-│   ├── Dockerfile
-│   └── tests/
-├── contracts/schemas.json               # Shared contract definitions
-└── dashboard/app_final.html             # Standalone dashboard copy
+├── agent/                         # Google ADK conversational workflow
+│   ├── agent.py                   # HITL approval, orchestration, report artifact
+│   ├── risk_engine/               # Deterministic scoring and test planning
+│   ├── tools/                     # GitHub read client, broker client, renderer, simulator
+│   ├── templates/app_final.html   # Standalone final report
+│   └── README.MD                  # Agent-specific documentation
+├── broker/                        # Secure Broker MCP server
+│   ├── services/                  # Policy, JIT credentials, audit logging
+│   ├── tools/authorize.py         # MCP forwarding to CICD
+│   └── data/policies.yaml         # Allowed operations per agent
+├── cicd/                          # Adaptive CICD MCP server
+│   ├── tools/                     # GitHub Actions, PR comment/merge, deploy, monitor
+│   └── data/workflow_policy.yaml  # Strategy-to-workflow mapping
+└── README.md                       # Solution documentation
 ```
 
-## Requirements
+## Prerequisites
 
-- Python 3.11 or newer
-- Google Cloud project with Vertex AI enabled
-- Application Default Credentials for Vertex AI
-- GitHub token with permission to dispatch the configured workflow when using live CI/CD
-- MCP 1.x for the broker and CI/CD services (`mcp>=1.3.0,<2.0.0`)
+- Python 3.11 or later
+- A Gemini API key or a Google Cloud project with Vertex AI enabled
+- GitHub access to the target PR repository
+- A GitHub fine-grained token stored only in CICD configuration for live mode
+- GitHub Actions workflow files in the target repository
 
-## Local Setup
+The CICD token needs repository access and at least these fine-grained permissions:
 
-### Agent
+- `Issues: Read and write` to create PR comments
+- `Pull requests: Read and write` to merge PRs
+- `Actions: Read and write` to dispatch and inspect workflows
+- `Contents: Read and write` when required by the repository merge policy
+
+Branch protection rules can still reject a merge. ChangeGuard reports that failure and does not start CI/CD afterward.
+
+## Local Quick Start
+
+Create a virtual environment and install dependencies for each service. Commands below use PowerShell on Windows.
 
 ```powershell
 cd agent
@@ -107,122 +96,117 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
-gcloud auth application-default login
 ```
-
-Set these values in `agent/.env`:
-
-```env
-GOOGLE_GENAI_USE_VERTEXAI=true
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=us-east1
-GEMINI_MODEL=gemini-2.5-flash
-BROKER_MCP_URL=https://your-broker-service.run.app/mcp
-LAYER_MODE=live
-```
-
-Run the ADK agent from the `agent/` directory:
 
 ```powershell
-python -m google.adk.cli run .
-```
-
-Do not start the ADK agent with `python agent.py`; the file defines the ADK application and workflow, while the ADK CLI provides the runtime.
-
-### Broker
-
-```powershell
-cd broker
+cd ..\broker
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python server.py
 ```
 
-The broker listens on port `8080` by default. Configure its downstream CI/CD MCP endpoint with:
-
-```env
-CICD_MCP_URL=https://your-cicd-service.run.app/mcp
+```powershell
+cd ..\cicd
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-### CI/CD server
+Start the services in separate terminals, in this order:
 
 ```powershell
 cd cicd
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
 python server.py
 ```
 
-Use `CICD_MODE=simulated` for local testing. Use `CICD_MODE=live` only after configuring GitHub and Google Cloud credentials.
-
-## Environment Variables
-
-| Variable | Component | Purpose |
-|---|---|---|
-| `GOOGLE_GENAI_USE_VERTEXAI` | Agent | Select Vertex AI instead of Gemini API key authentication |
-| `GOOGLE_CLOUD_PROJECT` | Agent, CICD | Google Cloud project ID |
-| `GOOGLE_CLOUD_LOCATION` | Agent | Vertex AI location |
-| `GEMINI_MODEL` | Agent | Gemini model name |
-| `BROKER_MCP_URL` | Agent | Secure Broker MCP endpoint, normally ending in `/mcp` |
-| `CICD_MCP_URL` | Broker | Adaptive CI/CD MCP endpoint, normally ending in `/mcp` |
-| `LAYER_MODE` | Agent | `mock` or `live` for context delegation |
-| `CICD_MODE` | CICD | `simulated` or `live` |
-| `GITHUB_TOKEN` | CICD | Token used to dispatch GitHub Actions |
-| `GITHUB_OWNER` | CICD | GitHub repository owner |
-| `GITHUB_REPO` | CICD | GitHub repository name |
-| `GOOGLE_CLOUD_REGION` | CICD | Cloud Run region, normally `us-east1` |
-
-Use Vertex AI ADC rather than `GOOGLE_API_KEY` when `GOOGLE_GENAI_USE_VERTEXAI=true`.
-
-## Cloud Run Deployment
-
-Deploy each service from its own directory. The image build can be performed by Cloud Build:
-
 ```powershell
-gcloud builds submit --tag us-east1-docker.pkg.dev/PROJECT_ID/REPOSITORY/changeguard-broker:latest broker
-gcloud builds submit --tag us-east1-docker.pkg.dev/PROJECT_ID/REPOSITORY/changeguard-cicd:latest cicd
+cd broker
+python server.py
 ```
 
-Then deploy the images:
-
 ```powershell
-gcloud run deploy changeguard-broker `
-  --image us-east1-docker.pkg.dev/PROJECT_ID/REPOSITORY/changeguard-broker:latest `
-  --region us-east1
-
-gcloud run deploy changeguard-cicd `
-  --image us-east1-docker.pkg.dev/PROJECT_ID/REPOSITORY/changeguard-cicd:latest `
-  --region us-east1
+cd agent
+.\.venv\Scripts\Activate.ps1
+python -m google.adk.cli web .
 ```
 
-The broker must have `CICD_MCP_URL` configured. The CICD service must have `CICD_MODE=live`, GitHub settings, and the required Cloud Run permissions. Keep Cloud Run authentication enabled when possible and grant the agent or broker service account `roles/run.invoker`; use `--allow-unauthenticated` only when public invocation is an explicit requirement.
+Use the ADK web URL printed by the last command. Start a new session, submit an open PR URL, review the assessment, then answer naturally to approve or reject the plan.
+
+Do not run `python agent.py`; it defines the ADK application and must be hosted by the ADK CLI.
+
+## Environment Configuration
+
+### `agent/.env`
+
+```env
+MODEL=gemini-3.6-flash
+GOOGLE_GENAI_USE_VERTEXAI=false
+# GOOGLE_API_KEY=...
+# GOOGLE_CLOUD_PROJECT=...
+# GOOGLE_CLOUD_LOCATION=us-east1
+BROKER_MCP_URL=http://localhost:8080/mcp
+LAYER_MODE=live
+LOG_LEVEL=INFO
+```
+
+`LAYER_MODE=live` enables the post-approval broker/CICD path. `LAYER_MODE=mock` keeps the PR analysis and approval conversation but simulates the post-approval pipeline. The agent does not store a GitHub write token.
+
+### `broker/.env`
+
+```env
+PORT=8080
+LOG_LEVEL=INFO
+CICD_MCP_URL=http://localhost:8082/mcp
+# CICD_MCP_TOKEN=...
+```
+
+Edit [broker/data/policies.yaml](broker/data/policies.yaml) to control which agent may call which CICD actions. `comment_pr`, `merge_pr`, and deployment actions are policy-controlled and audited.
+
+### `cicd/.env`
+
+```env
+PORT=8082
+LOG_LEVEL=INFO
+CICD_MODE=live
+GITHUB_TOKEN=replace-with-a-secret
+GITHUB_OWNER=your-owner
+GITHUB_REPO=your-repository
+GITHUB_REF=main
+GITHUB_MERGE_METHOD=squash
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_REGION=us-east1
+```
+
+Use `CICD_MODE=simulated` for an offline demo. `CICD_MODE=live` dispatches the workflows configured in [cicd/data/workflow_policy.yaml](cicd/data/workflow_policy.yaml). Keep `GITHUB_TOKEN` in CICD only, preferably in Secret Manager when deployed.
 
 ## Validation
 
-Run the test suites from the repository root with the agent virtual environment active:
+Run the component test suites from their service folders:
 
 ```powershell
-python -m pytest agent/tests broker/tests cicd/tests
+cd cicd
+python -m pytest -q tests
 ```
-
-A focused import and report-rendering check is also useful:
 
 ```powershell
-python -m py_compile agent/agent.py agent/tools/report_renderer.py
+cd broker
+python -m pytest -q tests
 ```
 
-The local simulated path should be validated in this order:
-
-```text
-agent -> broker authorize_tool_call -> CICD MCP run_tests -> response
+```powershell
+cd agent
+python -m py_compile agent.py tools\report_renderer.py tools\github_api.py
 ```
 
-## Demo Scenarios
+For a full live test, use an open, mergeable PR in a safe repository. Approving the plan causes a real PR comment, merge attempt, and configured GitHub Actions workflow dispatch.
 
-The repository includes mock PR scenarios under `agent/pr_mocks/` and scenario tests under `agent/tests/test_pr_scenarios/`. These cover low-risk changes, payment and authentication changes, breaking changes, and new endpoints with zero test coverage.
+## Cloud Run Notes
+
+Deploy `broker/` and `cicd/` separately. Configure `CICD_MCP_URL` on the broker with the CICD service URL ending in `/mcp`. Configure `BROKER_MCP_URL` on the agent with the broker URL ending in `/mcp`.
+
+Use Cloud Run service authentication and grant the caller `roles/run.invoker` where possible. Store `GITHUB_TOKEN` as a secret, never in source control or documentation.
 
 ## License
 
-MIT - Built for the Gemini Enterprise Hackathon 2026.
+MIT. Built for the Gemini Enterprise Hackathon 2026.

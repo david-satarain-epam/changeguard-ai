@@ -14,46 +14,38 @@ from mcp.client.streamable_http import streamable_http_client
 
 logger = logging.getLogger("changeguard-broker.authorize")
 
-from services.policy_engine import PolicyEngine
-from services.jit_credentials import JitCredentialGenerator
-from services.audit_logger import AuditLogger
+try:
+    from services.policy_engine import PolicyEngine
+    from services.jit_credentials import JitCredentialGenerator
+    from services.audit_logger import AuditLogger
+except ModuleNotFoundError:  # pragma: no cover
+    from broker.services.policy_engine import PolicyEngine
+    from broker.services.jit_credentials import JitCredentialGenerator
+    from broker.services.audit_logger import AuditLogger
 
 # Services are initialized in server.py and passed via closure
 
-CONTEXT_SERVER_URL = os.getenv("CONTEXT_SERVER_URL", "http://localhost:8081")
-CICD_SERVER_URL = os.getenv(
-    "CICD_MCP_URL",
-    os.getenv("CICD_SERVER_URL", "https://changeguard-cicd-511412396970.us-east1.run.app/mcp"),
-)
+CICD_MCP_URL = os.getenv("CICD_MCP_URL", "http://localhost:8082/mcp")
 CICD_MCP_HEADERS = {}
 if token := os.getenv("CICD_MCP_TOKEN"):
     CICD_MCP_HEADERS["Authorization"] = f"Bearer {token}"
 
-# Tools that go to Impact Context Server
-CONTEXT_TOOLS = {
-    "compare_api_contracts",
-    "find_affected_consumers",
-    "get_business_criticality",
-    "get_test_catalog",
-}
-
 # Tools that go to Adaptive CI/CD Server
 EXECUTION_TOOLS = {
     "run_tests",
+    "comment_pr",
+    "merge_pr",
     "deploy_canary",
     "monitor",
     "deploy_full",
     "rollback",
-    "pipeline_status",
 }
 
 
 def _get_target_server(tool_name: str) -> str:
     """Map tool name to target server URL."""
-    if tool_name in CONTEXT_TOOLS:
-        return CONTEXT_SERVER_URL
     if tool_name in EXECUTION_TOOLS:
-        return CICD_SERVER_URL
+        return CICD_MCP_URL
     return None
 
 
@@ -66,10 +58,10 @@ async def _call_cicd_tool(tool_name: str, payload: dict) -> dict:
     """Forward an authorized operation through CICD's MCP protocol."""
     async with httpx.AsyncClient(
         headers=CICD_MCP_HEADERS or None,
-        timeout=30,
+        timeout=120,
     ) as http_client:
         async with streamable_http_client(
-            _mcp_endpoint(CICD_SERVER_URL),
+            _mcp_endpoint(CICD_MCP_URL),
             http_client=http_client,
         ) as streams:
             read_stream, write_stream = streams[:2]

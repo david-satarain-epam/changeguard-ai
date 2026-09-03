@@ -100,4 +100,4 @@ if __name__ == "__main__":
     transport_type = os.getenv("MCP_TRANSPORT", "streamable-http")
     logger.info("🛡️  ChangeGuard AI Secure Broker starting on %s transport", transport_type)
     logger.info("=" * 60)
-    server.run(transport=transport_type, host="0.0.0.0", port=port)
+    server.run(transport=transport_type)

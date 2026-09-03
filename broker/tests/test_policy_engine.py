@@ -33,17 +33,6 @@ class TestPolicyEngine:
         assert allowed is False
         assert "not registered" in reason.lower()
 
-    def test_all_context_tools_allowed(self, policy_engine):
-        context_tools = [
-            "compare_api_contracts",
-            "find_affected_consumers",
-            "get_business_criticality",
-            "get_test_catalog",
-        ]
-        for tool in context_tools:
-            allowed, _ = policy_engine.is_allowed("change-impact-agent", tool)
-            assert allowed is True, f"Tool '{tool}' should be allowed"
-
     def test_all_execution_tools_allowed(self, policy_engine):
         exec_tools = [
             "run_tests",

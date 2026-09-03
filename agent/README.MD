@@ -1,264 +1,127 @@
 # ChangeGuard AI Agent
 
-The ChangeGuard agent analyzes open GitHub pull requests, calculates deterministic deployment risk, delegates authorized CI/CD operations through the Secure Broker MCP server, and produces a final HTML report attached to the ADK session.
+The ChangeGuard AI Agent is the conversational orchestration layer of the ChangeGuard solution. It receives one GitHub pull-request URL, analyzes its risk, presents a human-readable plan, waits for explicit user approval, and produces the final HTML report.
+
+It does not write to GitHub and does not call Adaptive CICD directly. Every mutable action is requested through the Secure Broker MCP server.
 
 ## Responsibilities
 
-The agent is responsible for:
+- Validate and read an open GitHub PR and its changed files.
+- Reject invalid, inaccessible, closed, or already-merged PRs instead of using mock data.
+- Compute deterministic risk, affected services, consumer count, coverage gaps, recommended tests, and deployment strategy.
+- Present the assessment, exact PR-comment preview, and proposed post-approval actions.
+- Pause through ADK Human-in-the-Loop and interpret natural-language approval, rejection, or ambiguity with Gemini.
+- On approval, request broker authorization for PR comment, merge, and the selected CI/CD strategy.
+- Produce a standalone `changeguard-report.html` ADK artifact.
 
-- Receiving a GitHub repository URL.
-- Fetching up to 10 recent open pull requests.
-- Calculating risk from deterministic Python rules.
-- Identifying affected services and consumers.
-- Building a test and deployment strategy.
-- Requesting authorization before live CI/CD operations.
-- Producing the final structured report.
-- Attaching `changeguard-report.html` using the packaged dashboard template.
-
-The agent does not call the CI/CD MCP server directly. All live execution goes through the Secure Broker:
-
-```text
-Agent -> Secure Broker MCP -> Adaptive CI/CD MCP -> GitHub Actions / Cloud Run
-```
-
-## Current Workflow
+## Workflow
 
 ```mermaid
 flowchart TD
-    Input[User repository URL] --> Fetch[fetch_prs_node]
+    Input[PR URL] --> Fetch[fetch_prs_node]
     Fetch --> Assess[assess_prs_node]
-    Assess --> Synthesis[synthesis_agent]
-    Synthesis --> Attach[attach_final_report_node]
-    Attach --> Artifact[changeguard-report.html]
-    Synthesis -->|live CI/CD authorization| Broker[Secure Broker MCP]
-    Broker --> CICD[Adaptive CI/CD MCP]
+    Assess --> Review[request_approval_node]
+    Review --> Interpret[approval_interpreter]
+    Interpret --> Execute[execute_approved_strategy_node]
+    Execute --> Report[synthesis_agent]
+    Report --> Artifact[changeguard-report.html]
 ```
 
-The exported `root_agent` is the `pr_risk_workflow`. It starts at `fetch_prs_node`, not at `input_agent`. `input_agent` remains available as a separate ADK `App` for URL-validation scenarios, but it is not currently connected as a workflow edge in `root_agent`.
+### Approval Outcomes
 
-## Workflow Nodes
+| User intent | Result |
+|---|---|
+| Approves comment, merge, and execution | The agent calls Broker -> CICD for `comment_pr`, `merge_pr`, and the selected strategy. |
+| Rejects execution | The agent returns an analysis-only report. No comment, merge, or CI/CD operation runs. |
+| Ambiguous response | The agent remains pending and requests clarification. |
 
-### `fetch_prs_node`
+The approval interpreter recognizes natural Spanish or English responses and common typos. It does not depend on a fixed `yes/no` list.
 
-Extracts a repository URL from the incoming value and calls `fetch_github_prs`.
-
-GitHub endpoint:
+## Security Boundary
 
 ```text
-GET https://api.github.com/repos/{owner}/{repo}/pulls
-    ?state=open&per_page=10&sort=created&direction=desc
+Agent -> Secure Broker MCP -> Adaptive CICD MCP -> GitHub / GitHub Actions
 ```
 
-Each PR contains:
+The agent is allowed to read GitHub PR data. The CICD component owns the GitHub write credential and performs `comment_pr` and `merge_pr`. The Broker evaluates policy, issues JIT credentials, logs the request, and forwards only authorized tools.
 
-```json
-{
-  "pr_id": "847",
-  "pr_title": "Update refund endpoint",
-  "description": "...",
-  "pr_url": "https://github.com/owner/repo/pull/847"
-}
-```
+## Configuration
 
-The GitHub helper uses `GITHUB_TOKEN` when available. If the URL is invalid, the API fails, or no open PRs are returned, it falls back to the built-in mock payloads.
-
-### `assess_prs_node`
-
-Runs deterministic scoring for every fetched PR using `tools/risk_analyzer.py`. It produces:
-
-- `risk_score`: `LOW`, `MEDIUM`, `HIGH`, or `CRITICAL`.
-- `decision`: `APPROVE`, `ROLLOUT`, or `POSTPONE`.
-- `deployment_strategy`: `DIRECT`, `GATED`, `CANARY`, or `NONE`.
-- Affected services and consumer count.
-- Test plan and suggested tests.
-- Escalation reasons and context flags.
-- A `pipeline_execution` simulation used as the initial assessment data.
-
-The deterministic mapping is:
-
-| Risk | Decision | Strategy |
-|---|---|---|
-| `LOW` | `APPROVE` | `DIRECT` |
-| `MEDIUM` | `APPROVE` | `GATED` |
-| `HIGH` | `ROLLOUT` | `CANARY` |
-| `CRITICAL` | `POSTPONE` | `NONE` |
-
-### `synthesis_agent`
-
-Receives `{assessments_data}` through ADK state injection and creates the final JSON array. It must preserve the deterministic risk and pipeline fields, add specific reasoning, and request live execution through the broker when required by the strategy.
-
-The broker tool is the only MCP toolset registered on this agent. Its published tools are:
-
-- `authorize_tool_call`
-- `get_audit_log`
-
-For a live operation, the agent sends `agent_id=change-impact-agent`, the exact CI/CD tool name, a session ID, and the tool payload to `authorize_tool_call`. It must not invoke CI/CD directly.
-
-### `attach_final_report_node`
-
-Runs after `synthesis_agent` and:
-
-1. Normalizes the synthesis output to a JSON array.
-2. Loads `templates/app_final.html`.
-3. Embeds the final report data into the HTML.
-4. Removes the external `contracts/agent_output.json` dependency.
-5. Saves `changeguard-report.html` with MIME type `text/html` through `ctx.save_artifact`.
-
-The file is therefore attached to the current ADK session and can be downloaded from the conversation UI.
-
-## Output Contract
-
-Each report item contains these top-level fields:
-
-```json
-{
-  "report_html": "<div>...</div>",
-  "report_metadata": {
-    "workflow_id": "wf-20260830-847",
-    "pr_id": "847",
-    "pr_title": "Update refund endpoint",
-    "generated_at": "2026-08-30T00:00:00Z",
-    "total_duration_seconds": 102,
-    "status": "SUCCESS"
-  },
-  "impact_analysis": {
-    "risk_score": "HIGH",
-    "decision": "ROLLOUT",
-    "strategy": "CANARY",
-    "affected_services": ["payment-api"],
-    "affected_consumers_count": 12,
-    "reasoning": "...",
-    "escalation_log": [],
-    "coverage_gap_detected": false,
-    "context_sources": {}
-  },
-  "pipeline_execution": {
-    "stages": [],
-    "final_status": "SUCCESS",
-    "total_duration_seconds": 102
-  }
-}
-```
-
-`report_html` is the per-PR card content. The downloadable artifact is the complete dashboard document generated from the same final output.
-
-## MCP Configuration
-
-The agent uses ADK's `MCPToolset` with streamable HTTP and connects only to the broker:
+Copy `.env.example` to `.env` and configure one model provider.
 
 ```env
-BROKER_MCP_URL=https://your-broker-service.run.app/mcp
+MODEL=gemini-3.6-flash
+GOOGLE_GENAI_USE_VERTEXAI=false
+# GOOGLE_API_KEY=...
+# GOOGLE_CLOUD_PROJECT=...
+# GOOGLE_CLOUD_LOCATION=us-east1
+
+BROKER_MCP_URL=http://localhost:8080/mcp
 LAYER_MODE=live
+AGENT_PORT=3000
+LOG_LEVEL=INFO
 ```
 
-The broker is configured separately with the downstream CI/CD MCP endpoint:
+`LAYER_MODE` controls only the post-approval execution behavior:
 
-```env
-CICD_MCP_URL=https://your-cicd-service.run.app/mcp
-```
+| Value | Behavior |
+|---|---|
+| `live` | Requests real Broker -> CICD operations after approval. |
+| `mock` | Keeps the same analysis and approval flow, then uses the local pipeline simulator. |
 
-This separation keeps authorization and audit enforcement in the broker. The agent should not define a direct `CICD_MCP_URL` toolset.
+Do not set `GITHUB_TOKEN` here. It belongs to `cicd/.env` or the CICD Cloud Run secret configuration.
 
-## Environment Variables
+## Run Locally
 
-| Variable | Required | Purpose |
-|---|---|---|
-| `GOOGLE_GENAI_USE_VERTEXAI` | Yes for Vertex AI | Select Vertex AI authentication |
-| `GOOGLE_CLOUD_PROJECT` | Yes for Vertex AI | Google Cloud project ID |
-| `GOOGLE_CLOUD_LOCATION` | Yes for Vertex AI | Vertex AI region |
-| `GEMINI_MODEL` or `MODEL` | No | Gemini model; `MODEL` takes precedence |
-| `BROKER_MCP_URL` | For live tools | Secure Broker MCP endpoint |
-| `BROKER_MCP_TOKEN` | If broker is protected | Bearer token for broker MCP |
-| `LAYER_MODE` | No | `mock` or `live` for context delegation |
-| `GITHUB_TOKEN` | Optional for PR reads | GitHub API authentication and higher rate limits |
-
-For Vertex AI, authenticate with Application Default Credentials:
+The Broker and CICD MCP servers must be running before a live post-approval action can work.
 
 ```powershell
-gcloud auth application-default login
-```
-
-Do not set `GOOGLE_API_KEY` when using `GOOGLE_GENAI_USE_VERTEXAI=true`.
-
-## Installation
-
-From the `agent/` directory:
-
-```powershell
+cd agent
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
+python -m google.adk.cli web .
 ```
 
-Update `agent/.env` with the project and broker values. The loader reads that file relative to `agent.py`, so startup does not depend on the current working directory.
-
-## Running
-
-Use the ADK CLI from the `agent/` directory:
-
-```powershell
-python -m google.adk.cli run .
-```
-
-The runtime discovers `root_agent` from `agent.py`. Do not use `python agent.py` as the primary runner; that only imports and defines the application.
-
-## Testing
-
-From the repository root, with the agent environment active:
-
-```powershell
-python -m pytest agent/tests
-```
-
-Focused checks:
-
-```powershell
-python -m py_compile agent/agent.py agent/tools/report_renderer.py
-```
-
-Test the HTML renderer independently:
-
-```powershell
-python -c "from agent.tools.report_renderer import render_report_html; print(len(render_report_html([])))"
-```
-
-For a live end-to-end run, verify this sequence:
+Open the local URL printed by ADK. Use a fresh session and provide an open PR URL:
 
 ```text
-1. Agent discovers broker tools.
-2. Broker authorizes change-impact-agent.
-3. Broker forwards the operation through MCP to CI/CD.
-4. CI/CD triggers GitHub Actions or Cloud Run.
-5. Agent attaches changeguard-report.html.
+https://github.com/owner/repository/pull/123
 ```
 
-## Directory Layout
+Do not start the agent with `python agent.py`.
 
-```text
-agent/
-├── agent.py                         # ADK workflow and root_agent
-├── .env.example                     # Configuration template
-├── requirements.txt
-├── templates/
-│   └── app_final.html               # Packaged standalone report template
-├── tools/
-│   ├── analyze_pr.py                # PR fetch and risk helpers
-│   ├── context_tools.py             # Context tools and broker delegation
-│   ├── executions_tools.py          # Broker MCPToolset
-│   ├── github_api.py                # GitHub repository PR listing
-│   ├── pipeline_simulator.py        # Deterministic local pipeline output
-│   ├── report_renderer.py           # HTML artifact generation
-│   └── risk_analyzer.py             # Keyword-based scoring helper
-├── risk_engine/                     # Shared deterministic risk rules
-├── pr_mocks/                        # Mock PR payloads
-└── tests/                           # Agent and risk-engine tests
+## Main Files
+
+| File | Purpose |
+|---|---|
+| [agent.py](agent.py) | ADK workflow, Human-in-the-Loop approval, orchestration, and artifact attachment. |
+| [tools/github_api.py](tools/github_api.py) | Read-only GitHub PR validation and changed-file retrieval. |
+| [tools/executions_tools.py](tools/executions_tools.py) | Secure Broker MCP client. |
+| [tools/report_renderer.py](tools/report_renderer.py) | Report normalization and standalone HTML generation. |
+| [templates/app_final.html](templates/app_final.html) | Final report template and print/PDF behavior. |
+| [risk_engine/](risk_engine/) | Deterministic risk scoring, service mapping, and test-plan generation. |
+
+## PR Validation
+
+The agent stops before analysis when GitHub reports any of these conditions:
+
+- PR URL is malformed.
+- PR does not exist.
+- PR is closed.
+- PR has already been merged.
+- GitHub rejects the request because the PR is private or the credential lacks access.
+- GitHub cannot be reached.
+
+The active single-PR workflow does not fall back to example PR data. The `pr_mocks/` directory is retained for demos and automated scenario testing only.
+
+## Validation
+
+```powershell
+cd agent
+.\.venv\Scripts\Activate.ps1
+python -m py_compile agent.py tools\github_api.py tools\report_renderer.py
 ```
 
-## Operational Notes
-
-- `agent/.env` is local configuration and must not be committed.
-- Live CI/CD requires the broker and CICD services to be reachable and correctly configured.
-- The CICD server must use `CICD_MODE=live` to trigger GitHub Actions or Cloud Run operations.
-- A simulated `pipeline_execution` value is available during deterministic assessment; live execution results should replace it before the final report claims success.
-- The HTML artifact is generated from the final synthesis output, not from a separate JSON file.
+See the root [README](../README.md) for the complete multi-service quick start, CICD configuration, policy controls, and deployment notes.

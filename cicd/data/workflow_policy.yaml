@@ -1,0 +1,22 @@
+# Workflow dispatch policy for the target GitHub repository.
+# Change workflow names or refs here when integrating another repository.
+ref: main
+workflows:
+  run_tests: payments-test-suite.yml
+  deploy_canary: deploy-canary.yml
+  monitor: monitor-canary.yml
+  deploy_full: deploy-full.yml
+  rollback: rollback.yml
+strategies:
+  DIRECT:
+    - run_tests
+    - deploy_full
+  GATED:
+    - run_tests
+    - deploy_full
+  CANARY:
+    - run_tests
+    - deploy_canary
+    - monitor
+    - deploy_full
+  NONE: []
