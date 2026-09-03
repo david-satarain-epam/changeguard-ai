@@ -5,22 +5,20 @@
 policies:
   - agent_id: "change-impact-agent"
     allowed_tools:
-      # Context tools
-      - "compare_api_contracts"
-      - "find_affected_consumers"
-      - "get_business_criticality"
-      - "get_test_catalog"
       # Execution tools
       - "run_tests"
+      - "comment_pr"
+      - "merge_pr"
       - "deploy_canary"
       - "monitor"
       - "deploy_full"
       - "rollback"
-      - "pipeline_status"
     scope: "ci-cd-execution"
     max_session_minutes: 30
     token_budget: 50000
     require_approval_for:
+      - "comment_pr"
+      - "merge_pr"
       - "deploy_full"
       - "rollback"
 

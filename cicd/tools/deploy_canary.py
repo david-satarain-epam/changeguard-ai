@@ -9,11 +9,7 @@ import os
 
 logger = logging.getLogger("changeguard-cicd.deploy_canary")
 
-GOOGLE_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-GOOGLE_REGION = os.getenv("GOOGLE_CLOUD_REGION", "us-east1")
-
-
-async def deploy_canary_handler(percentage: int, service: str, mode: str = "simulated") -> dict:
+async def deploy_canary_handler(percentage: int, service: str, mode: str = "simulated", pr_id: str = "unknown") -> dict:
     logger.info("deploy_canary: %d%% | %s | mode: %s", percentage, service, mode)
 
     if mode == "simulated":
@@ -27,14 +23,18 @@ async def deploy_canary_handler(percentage: int, service: str, mode: str = "simu
             "mode": "simulated",
         }
 
-    # ── Live mode: Cloud Run traffic splitting ──
-    return await _deploy_canary_live(percentage, service)
+    from tools.run_tests import dispatch_github_workflow
+    return await dispatch_github_workflow(
+        "deploy_canary", {"percentage": str(percentage), "service": service}, pr_id
+    )
 
 
 async def _deploy_canary_live(percentage: int, service: str) -> dict:
     """Update Cloud Run traffic to split between canary and stable."""
-    if not GOOGLE_PROJECT:
-        logger.warning("GOOGLE_CLOUD_PROJECT not set — falling back to simulated")
+    google_project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    google_region = os.getenv("GOOGLE_CLOUD_REGION")
+    if not google_project or not google_region:
+        logger.error("GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_REGION are required for live deployment")
         return await deploy_canary_handler(percentage, service, "simulated")
 
     try:
@@ -42,7 +42,7 @@ async def _deploy_canary_live(percentage: int, service: str) -> dict:
         from google.cloud.run_v2.types import TrafficTarget, RevisionTrafficTarget
 
         client = ServicesClient()
-        service_path = f"projects/{GOOGLE_PROJECT}/locations/{GOOGLE_REGION}/services/{service}"
+        service_path = f"projects/{google_project}/locations/{google_region}/services/{service}"
 
         # Get current service
         current = client.get_service(name=service_path)

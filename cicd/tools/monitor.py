@@ -11,10 +11,8 @@ import os
 
 logger = logging.getLogger("changeguard-cicd.monitor")
 
-GOOGLE_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-
 async def monitor_handler(duration_minutes: int, service: str, mode: str = "simulated",
-                          simulated_error_rate: float = None) -> dict:
+                          simulated_error_rate: float = None, pr_id: str = "unknown") -> dict:
     logger.info("monitor: %s | %d min | mode: %s", service, duration_minutes, mode)
 
     if mode == "simulated":
@@ -34,14 +32,17 @@ async def monitor_handler(duration_minutes: int, service: str, mode: str = "simu
             "mode": "simulated",
         }
 
-    # ── Live mode: Cloud Monitoring API ──
-    return await _monitor_live(duration_minutes, service)
+    from tools.run_tests import dispatch_github_workflow
+    return await dispatch_github_workflow(
+        "monitor", {"duration_minutes": str(duration_minutes), "service": service}, pr_id
+    )
 
 
 async def _monitor_live(duration_minutes: int, service: str) -> dict:
     """Query Cloud Monitoring for real metrics."""
-    if not GOOGLE_PROJECT:
-        logger.warning("GOOGLE_CLOUD_PROJECT not set — falling back to simulated")
+    google_project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not google_project:
+        logger.error("GOOGLE_CLOUD_PROJECT is required for live monitoring")
         return await monitor_handler(duration_minutes, service, "simulated")
 
     try:
@@ -49,7 +50,7 @@ async def _monitor_live(duration_minutes: int, service: str) -> dict:
         from google.protobuf.duration_pb2 import Duration
 
         client = monitoring_v3.MetricServiceClient()
-        project_path = f"projects/{GOOGLE_PROJECT}"
+        project_path = f"projects/{google_project}"
 
         # Error rate: 5xx responses / total requests
         interval = monitoring_v3.TimeInterval()

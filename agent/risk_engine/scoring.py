@@ -58,6 +58,8 @@ def calculate_risk_score(
     if test_coverage_zero:
         risk = 3
         reasons.append("ZERO test coverage → CRITICAL")
+    else:
+        risk = min(risk, 2)
 
     risk = min(risk, 3)
 

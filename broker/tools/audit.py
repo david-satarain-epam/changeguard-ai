@@ -7,7 +7,10 @@ import logging
 
 logger = logging.getLogger("changeguard-broker.audit")
 
-from services.audit_logger import AuditLogger
+try:
+    from services.audit_logger import AuditLogger
+except ModuleNotFoundError:  # pragma: no cover
+    from broker.services.audit_logger import AuditLogger
 
 def create_audit_handler(audit_logger: AuditLogger):
     """Factory function — injects audit logger."""
