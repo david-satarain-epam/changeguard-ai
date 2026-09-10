@@ -16,7 +16,10 @@ def policy_engine():
 @pytest.fixture
 def jit_creds():
     """JIT credential generator."""
-    return JitCredentialGenerator(default_ttl_minutes=15)
+    return JitCredentialGenerator(
+        default_ttl_minutes=15,
+        signing_secret="test-jit-signing-secret-at-least-32-chars",
+    )
 
 
 @pytest.fixture

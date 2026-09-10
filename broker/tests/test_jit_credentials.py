@@ -6,34 +6,38 @@ from datetime import datetime, timezone, timedelta
 class TestJitCredentials:
 
     def test_generates_token(self, jit_creds):
-        cred = jit_creds.generate("change-impact-agent", "run_tests")
+        cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847")
         assert "token" in cred
-        assert cred["token"].startswith("changeguard-jit-")
+        assert cred["token"].startswith("cgjit.")
 
     def test_scoped_to_tool(self, jit_creds):
-        cred = jit_creds.generate("change-impact-agent", "deploy_full")
+        cred = jit_creds.generate("change-impact-agent", "deploy_full", "pr-847")
         assert cred["scope"] == "deploy_full"
 
     def test_has_agent_id(self, jit_creds):
-        cred = jit_creds.generate("change-impact-agent", "run_tests")
+        cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847")
         assert cred["agent_id"] == "change-impact-agent"
 
+    def test_scoped_to_session(self, jit_creds):
+        cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847")
+        assert cred["session_id"] == "pr-847"
+
     def test_default_ttl_15_minutes(self, jit_creds):
-        cred = jit_creds.generate("change-impact-agent", "run_tests")
+        cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847")
         assert cred["ttl_minutes"] == 15
 
     def test_custom_ttl(self, jit_creds):
-        cred = jit_creds.generate("change-impact-agent", "run_tests", ttl_minutes=5)
+        cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847", ttl_minutes=5)
         assert cred["ttl_minutes"] == 5
 
     def test_expires_in_future(self, jit_creds):
-        cred = jit_creds.generate("change-impact-agent", "run_tests")
+        cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847")
         expires = datetime.fromisoformat(cred["expires_at"])
         now = datetime.now(timezone.utc)
         assert expires > now
 
     def test_expires_within_ttl(self, jit_creds):
-        cred = jit_creds.generate("change-impact-agent", "run_tests", ttl_minutes=10)
+        cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847", ttl_minutes=10)
         expires = datetime.fromisoformat(cred["expires_at"])
         now = datetime.now(timezone.utc)
         diff = expires - now
@@ -42,6 +46,6 @@ class TestJitCredentials:
     def test_unique_tokens(self, jit_creds):
         tokens = set()
         for _ in range(20):
-            cred = jit_creds.generate("change-impact-agent", "run_tests")
+            cred = jit_creds.generate("change-impact-agent", "run_tests", "pr-847")
             tokens.add(cred["token"])
         assert len(tokens) == 20

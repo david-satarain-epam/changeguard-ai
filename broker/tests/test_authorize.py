@@ -19,7 +19,8 @@ class TestAuthorize:
         ))
 
         assert result["authorized"] is True
-        assert result["jit_credential"].startswith("changeguard-jit-")
+        assert result["jit_credential_id"]
+        assert "jit_credential" not in result
         assert result["audit_id"] is not None
 
     def test_rogue_agent_blocked(self, policy_engine, jit_creds, audit_logger):
