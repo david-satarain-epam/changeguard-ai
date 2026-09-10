@@ -40,6 +40,7 @@ from tools.monitor import monitor_handler
 from tools.deploy_full import deploy_full_handler
 from tools.rollback import rollback_handler
 from tools.github_pr import comment_pr_handler, merge_pr_handler
+from tools.jit_credentials import jit_error
 
 # ═══════════════════════════════════════════════════════════════
 # MCP SERVER
@@ -56,7 +57,7 @@ app = FastMCP(
 
 
 @app.tool()
-async def run_tests(test_plan: list, pr_id: str) -> dict:
+async def run_tests(test_plan: list, pr_id: str, jit_credential: str) -> dict:
     """
     Execute a test suite.
     
@@ -67,11 +68,13 @@ async def run_tests(test_plan: list, pr_id: str) -> dict:
     Returns:
         Test result with total, passed, failed, duration.
     """
+    if error := jit_error(jit_credential, "run_tests"):
+        return error
     return await run_tests_handler(test_plan, pr_id, MODE)
 
 
 @app.tool()
-async def deploy_canary(percentage: int, service: str, pr_id: str = "unknown") -> dict:
+async def deploy_canary(percentage: int, service: str, jit_credential: str, pr_id: str = "unknown") -> dict:
     """
     Deploy a canary revision to a percentage of traffic.
     
@@ -82,12 +85,15 @@ async def deploy_canary(percentage: int, service: str, pr_id: str = "unknown") -
     Returns:
         Deploy result with status and traffic info.
     """
+    if error := jit_error(jit_credential, "deploy_canary"):
+        return error
     return await deploy_canary_handler(percentage, service, MODE, pr_id)
 
 
 @app.tool()
 async def monitor(duration_minutes: int, service: str,
-                  simulated_error_rate: float = None, pr_id: str = "unknown") -> dict:
+                  jit_credential: str, simulated_error_rate: float = None,
+                  pr_id: str = "unknown") -> dict:
     """
     Monitor canary metrics for a specified duration.
     
@@ -99,11 +105,13 @@ async def monitor(duration_minutes: int, service: str,
     Returns:
         Monitor result with error rate, latency, throughput, status.
     """
+    if error := jit_error(jit_credential, "monitor"):
+        return error
     return await monitor_handler(duration_minutes, service, MODE, simulated_error_rate, pr_id)
 
 
 @app.tool()
-async def deploy_full(service: str, pr_id: str = "unknown") -> dict:
+async def deploy_full(service: str, jit_credential: str, pr_id: str = "unknown") -> dict:
     """
     Promote canary to 100% traffic.
     
@@ -113,23 +121,29 @@ async def deploy_full(service: str, pr_id: str = "unknown") -> dict:
     Returns:
         Deploy result.
     """
+    if error := jit_error(jit_credential, "deploy_full"):
+        return error
     return await deploy_full_handler(service, MODE, pr_id)
 
 
 @app.tool()
-async def comment_pr(pr_url: str, body: str) -> dict:
+async def comment_pr(pr_url: str, body: str, jit_credential: str) -> dict:
     """Post an approved ChangeGuard assessment as a GitHub pull request comment."""
+    if error := jit_error(jit_credential, "comment_pr"):
+        return error
     return await comment_pr_handler(pr_url, body)
 
 
 @app.tool()
-async def merge_pr(pr_url: str, merge_method: str = "squash") -> dict:
+async def merge_pr(pr_url: str, jit_credential: str, merge_method: str = "squash") -> dict:
     """Merge an approved GitHub pull request using the requested merge method."""
+    if error := jit_error(jit_credential, "merge_pr"):
+        return error
     return await merge_pr_handler(pr_url, merge_method)
 
 
 @app.tool()
-async def rollback(service: str, rollback_version: str = "previous", pr_id: str = "unknown") -> dict:
+async def rollback(service: str, jit_credential: str, rollback_version: str = "previous", pr_id: str = "unknown") -> dict:
     """
     Emergency rollback to previous stable revision.
     
@@ -140,6 +154,8 @@ async def rollback(service: str, rollback_version: str = "previous", pr_id: str 
     Returns:
         Rollback result.
     """
+    if error := jit_error(jit_credential, "rollback"):
+        return error
     return await rollback_handler(service, rollback_version, MODE, pr_id)
 
 

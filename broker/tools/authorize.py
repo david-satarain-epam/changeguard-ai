@@ -54,7 +54,7 @@ def _mcp_endpoint(url: str) -> str:
     return url if url.rstrip("/").endswith("/mcp") else f"{url.rstrip('/')}/mcp"
 
 
-async def _call_cicd_tool(tool_name: str, payload: dict) -> dict:
+async def _call_cicd_tool(tool_name: str, payload: dict, jit_credential: str) -> dict:
     """Forward an authorized operation through CICD's MCP protocol."""
     async with httpx.AsyncClient(
         headers=CICD_MCP_HEADERS or None,
@@ -67,7 +67,10 @@ async def _call_cicd_tool(tool_name: str, payload: dict) -> dict:
             read_stream, write_stream = streams[:2]
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
-                result = await session.call_tool(tool_name, arguments=payload)
+                result = await session.call_tool(
+                    tool_name,
+                    arguments={**payload, "jit_credential": jit_credential},
+                )
 
     if getattr(result, "isError", False):
         return {"error": f"CICD MCP tool '{tool_name}' returned an error"}
@@ -131,6 +134,7 @@ def create_authorize_handler(
         credential = jit_creds.generate(
             agent_id=agent_id,
             tool_name=tool_name,
+            session_id=session_id,
         )
 
         # ── Step 3: Determine target server ──
@@ -154,14 +158,16 @@ def create_authorize_handler(
         forward_result = None
         if tool_name in EXECUTION_TOOLS:
             try:
-                forward_result = await _call_cicd_tool(tool_name, payload)
+                forward_result = await _call_cicd_tool(
+                    tool_name, payload, credential["token"]
+                )
             except Exception as e:
                 logger.error("Forward failed: %s", e)
                 forward_result = {"error": str(e)}
 
         return {
             "authorized": True,
-            "jit_credential": credential["token"],
+            "jit_credential_id": credential["jti"],
             "credential_ttl": credential["expires_at"],
             "audit_id": audit_logger.last_id,
             "forwarded_to": target,

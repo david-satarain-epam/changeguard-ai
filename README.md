@@ -27,8 +27,10 @@ flowchart LR
 4. The agent displays the assessment, an exact preview of the PR comment, and the actions it would take.
 5. ADK pauses the workflow and waits for the user to approve, reject, or clarify the plan in natural language.
 6. If rejected, ChangeGuard produces an analysis-only report with no PR mutation or pipeline execution.
-7. If approved, the agent asks the broker to authorize each action. CICD then posts the assessment comment, merges the PR, and executes the strategy.
-8. The agent attaches `changeguard-report.html` to the ADK session with the audit and pipeline outcome.
+7. If approved, the agent asks the broker to authorize each action. For every authorized operation, the broker issues a signed, short-lived JIT credential scoped to that agent, tool, and PR session.
+8. The broker injects the JIT credential into the downstream MCP call. CICD validates its signature, issuer, expiration, required claims, and exact tool scope before executing anything.
+9. CICD then posts the assessment comment, merges the PR, and executes the strategy. The agent never receives the signed credential.
+10. The agent attaches `changeguard-report.html` to the ADK session with the audit and pipeline outcome.
 
 ## Components
 
@@ -37,6 +39,29 @@ flowchart LR
 | ChangeGuard Agent | `agent/` | Conversation, PR analysis, approval pause/resume, report generation, orchestration | Broker MCP client only |
 | Secure Broker MCP | `broker/` | Policy enforcement, JIT credential issuance, audit logging, forwarding | `authorize_tool_call`, `get_audit_log` |
 | Adaptive CICD MCP | `cicd/` | GitHub PR mutation, GitHub Actions dispatch/polling, deployment and monitoring | `comment_pr`, `merge_pr`, `run_tests`, `deploy_canary`, `monitor`, `deploy_full`, `rollback` |
+
+## JIT Credential Enforcement
+
+The Secure Broker issues a new credential for every authorized CICD tool call. Credentials are HMAC-SHA256 signed and contain these claims:
+
+- `iss`: fixed ChangeGuard broker issuer
+- `sub`: authorized agent ID
+- `scope`: exactly one CICD tool
+- `session_id`: PR/session that requested the operation
+- `iat` and `exp`: issue and expiration timestamps
+- `jti`: unique credential identifier used for correlation and audit
+
+The raw credential exists only between Broker and CICD. The agent receives `jit_credential_id` and expiration metadata, but never the signed token. CICD rejects missing, malformed, tampered, expired, or incorrectly scoped credentials before invoking GitHub or a workflow handler.
+
+Broker and CICD must share the same strong `JIT_SIGNING_SECRET`. Generate one locally with PowerShell:
+
+```powershell
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+[Convert]::ToBase64String($bytes)
+```
+
+Copy the generated value into both `broker/.env` and `cicd/.env`. Do not add it to `agent/.env`, source control, logs, or API responses. Rotating the secret invalidates all credentials signed with the previous value; because credentials are short-lived, coordinate rotation across Broker and CICD.
 
 ## Strategies
 
@@ -159,6 +184,8 @@ PORT=8080
 LOG_LEVEL=INFO
 CICD_MCP_URL=http://localhost:8082/mcp
 # CICD_MCP_TOKEN=...
+JIT_SIGNING_SECRET=replace-with-a-random-secret-of-at-least-32-characters
+JIT_TTL_MINUTES=15
 ```
 
 Edit [broker/data/policies.yaml](broker/data/policies.yaml) to control which agent may call which CICD actions. `comment_pr`, `merge_pr`, and deployment actions are policy-controlled and audited.
@@ -169,6 +196,7 @@ Edit [broker/data/policies.yaml](broker/data/policies.yaml) to control which age
 PORT=8082
 LOG_LEVEL=INFO
 CICD_MODE=live
+JIT_SIGNING_SECRET=replace-with-the-same-value-used-by-broker
 GITHUB_TOKEN=replace-with-a-secret
 GITHUB_OWNER=your-owner
 GITHUB_REPO=your-repository
@@ -178,7 +206,7 @@ GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_REGION=us-east1
 ```
 
-Use `CICD_MODE=simulated` for an offline demo. `CICD_MODE=live` dispatches the workflows configured in [cicd/data/workflow_policy.yaml](cicd/data/workflow_policy.yaml). Keep `GITHUB_TOKEN` in CICD only, preferably in Secret Manager when deployed.
+Use `CICD_MODE=simulated` for an offline demo. `CICD_MODE=live` dispatches the workflows configured in [cicd/data/workflow_policy.yaml](cicd/data/workflow_policy.yaml). JIT validation is enforced in both modes, so Broker and CICD still need the same signing secret. Keep `GITHUB_TOKEN` in CICD only, preferably in Secret Manager when deployed.
 
 ## Validation
 
@@ -205,7 +233,7 @@ For a full live test, use an open, mergeable PR in a safe repository. Approving 
 
 Deploy `broker/` and `cicd/` separately. Configure `CICD_MCP_URL` on the broker with the CICD service URL ending in `/mcp`. Configure `BROKER_MCP_URL` on the agent with the broker URL ending in `/mcp`.
 
-Use Cloud Run service authentication and grant the caller `roles/run.invoker` where possible. Store `GITHUB_TOKEN` as a secret, never in source control or documentation.
+Use Cloud Run service authentication and grant the caller `roles/run.invoker` where possible. Store `GITHUB_TOKEN` and `JIT_SIGNING_SECRET` in Secret Manager, never in source control or documentation. Mount the same JIT secret version into both Broker and CICD; the agent does not need access to it.
 
 ## License
 

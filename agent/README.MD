@@ -43,7 +43,7 @@ The approval interpreter recognizes natural Spanish or English responses and com
 Agent -> Secure Broker MCP -> Adaptive CICD MCP -> GitHub / GitHub Actions
 ```
 
-The agent is allowed to read GitHub PR data. The CICD component owns the GitHub write credential and performs `comment_pr` and `merge_pr`. The Broker evaluates policy, issues JIT credentials, logs the request, and forwards only authorized tools.
+The agent is allowed to read GitHub PR data. The CICD component owns the GitHub write credential and performs `comment_pr` and `merge_pr`. The Broker evaluates policy, issues a signed JIT credential for each approved tool call, logs the request, and injects the credential only into the downstream MCP call. CICD validates expiration and exact tool scope before execution. The agent never receives or stores the signed JIT credential or its signing secret.
 
 ## Configuration
 

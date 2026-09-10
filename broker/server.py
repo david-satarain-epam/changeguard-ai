@@ -40,7 +40,9 @@ from tools.audit import create_audit_handler
 # ═══════════════════════════════════════════════════════════════
 
 policy_engine = PolicyEngine()
-jit_creds = JitCredentialGenerator(default_ttl_minutes=15)
+jit_creds = JitCredentialGenerator(
+    default_ttl_minutes=int(os.getenv("JIT_TTL_MINUTES", "15"))
+)
 audit_logger = AuditLogger()
 
 logger.info("Services initialized: %d policies loaded", len(policy_engine.policies))
